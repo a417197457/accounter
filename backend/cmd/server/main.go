@@ -1,0 +1,166 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+
+	"accounter/backend/internal/ai"
+	"accounter/backend/internal/config"
+	"accounter/backend/internal/handler"
+	"accounter/backend/internal/middleware"
+	"accounter/backend/internal/repository"
+
+	"github.com/gin-gonic/gin"
+)
+
+func main() {
+	// 加载配置
+	cfg := config.Load()
+
+	// 初始化数据库
+	if _, err := repository.NewDB(cfg); err != nil {
+		log.Fatalf("数据库初始化失败: %v", err)
+	}
+
+	// 设置 Gin 模式
+	if cfg.IsDev() {
+		gin.SetMode(gin.DebugMode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// 创建 Gin 引擎
+	r := gin.Default()
+
+	// CORS 中间件
+	r.Use(middleware.CORS())
+
+	// 健康检查端点
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "ok",
+			"ai":     cfg.AI.APIKey != "" && cfg.AI.APIKey != "YOUR_BAILIAN_API_KEY",
+		})
+	})
+
+	// 初始化 handlers
+	authHandler := handler.NewAuthHandler()
+	ledgerHandler := handler.NewLedgerHandler()
+	accountHandler := handler.NewAccountHandler()
+	categoryHandler := handler.NewCategoryHandler()
+	transactionHandler := handler.NewTransactionHandler()
+	statsHandler := handler.NewStatsHandler()
+	budgetHandler := handler.NewBudgetHandler()
+	reportHandler := handler.NewReportHandler()
+	aiService := ai.NewService()
+	aiHandler := handler.NewAIHandler(aiService)
+
+	// 公开路由（无需登录）
+	auth := r.Group("/api/auth")
+	{
+		auth.POST("/register", authHandler.Register)
+		auth.POST("/login", authHandler.Login)
+	}
+
+	// 需要登录的路由
+	api := r.Group("/api")
+	api.Use(middleware.Auth(cfg.JWT.Secret))
+	{
+		// 当前用户
+		api.GET("/me", authHandler.GetCurrentUser)
+
+		// 账本管理（不绑定具体账本）
+		ledgers := api.Group("/ledgers")
+		{
+			ledgers.GET("", ledgerHandler.List)
+			ledgers.POST("", ledgerHandler.Create)
+			ledgers.POST("/join", ledgerHandler.Join)
+			ledgers.GET("/:id/members", ledgerHandler.Members)
+			ledgers.DELETE("/:id/members/:uid", ledgerHandler.RemoveMember)
+			ledgers.POST("/:id/leave", ledgerHandler.Leave)
+		}
+
+		// 需要账本上下文的路由
+		business := api.Group("")
+		business.Use(middleware.RequireLedger())
+		{
+			// 账户
+			accounts := business.Group("/accounts")
+			{
+				accounts.GET("", accountHandler.List)
+				accounts.POST("", accountHandler.Create)
+				accounts.PUT("/:id", accountHandler.Update)
+				accounts.DELETE("/:id", accountHandler.Delete)
+			}
+
+			// 分类
+			categories := business.Group("/categories")
+			{
+				categories.GET("/tree", categoryHandler.ListTree)
+				categories.GET("/flat", categoryHandler.ListFlat)
+				categories.POST("", categoryHandler.Create)
+				categories.PUT("/:id", categoryHandler.Update)
+				categories.DELETE("/:id", categoryHandler.Delete)
+			}
+
+			// 流水
+			transactions := business.Group("/transactions")
+			{
+				transactions.GET("", transactionHandler.List)
+				transactions.GET("/:id", transactionHandler.Get)
+				transactions.POST("", transactionHandler.Create)
+				transactions.PUT("/:id", transactionHandler.Update)
+				transactions.DELETE("/:id", transactionHandler.Delete)
+			}
+
+			// 统计
+			stats := business.Group("/stats")
+			{
+				stats.GET("/overview", statsHandler.Overview)
+				stats.GET("/trend", statsHandler.Trend)
+				stats.GET("/category", statsHandler.Category)
+				stats.GET("/monthly", statsHandler.Monthly)
+			}
+
+			// 预算
+			budgets := business.Group("/budgets")
+			{
+				budgets.GET("", budgetHandler.List)
+				budgets.POST("", budgetHandler.Set)
+				budgets.PUT("", budgetHandler.Set)
+				budgets.DELETE("/:id", budgetHandler.Delete)
+			}
+
+			// 报表
+			reports := business.Group("/report")
+			{
+				reports.GET("/monthly", reportHandler.Monthly)
+				reports.GET("/export", reportHandler.Export)
+			}
+
+			// AI
+			aiGroup := business.Group("/ai")
+			{
+				aiGroup.POST("/chat", aiHandler.Chat)
+				aiGroup.POST("/transcribe", aiHandler.Transcribe)
+				aiGroup.POST("/confirm", aiHandler.Confirm)
+				aiGroup.GET("/settings", aiHandler.Settings)
+			}
+		}
+	}
+
+	// 启动服务器
+	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	log.Printf("服务器启动在 %s", addr)
+	log.Printf("环境: %s", map[bool]string{true: "开发", false: "生产"}[cfg.IsDev()])
+	log.Printf("数据库: %s", cfg.DB.Driver)
+	if cfg.AI.APIKey == "" || cfg.AI.APIKey == "YOUR_BAILIAN_API_KEY" {
+		log.Printf("警告: AI API Key 未配置，AI 功能不可用")
+	}
+
+	if err := r.Run(addr); err != nil {
+		log.Fatalf("服务器启动失败: %v", err)
+		os.Exit(1)
+	}
+}

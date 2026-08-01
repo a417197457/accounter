@@ -1,0 +1,46 @@
+# Go
+backend/dev.db
+backend/dev-server.log
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+backend/accounter
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.hbuilderx/
+frontend/unpackage/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Config (含敏感信息)
+backend/configs/config.yaml
+
+# Logs
+*.log
+logs/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temp files
+*.tmp
+*.bak
+*.cache
+
+# Environment
+.env
+.env.local
+.env.*.local
