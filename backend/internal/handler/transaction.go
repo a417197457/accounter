@@ -162,41 +162,54 @@ func (h *TransactionHandler) Delete(c *gin.Context) {
 }
 
 // List 获取流水列表
+// 注意：不要用 ShouldBindQuery 绑定 start/end 到 time.Time，
+// Gin 默认按 RFC3339 解析，YYYY-MM-DD 会直接报错。
 func (h *TransactionHandler) List(c *gin.Context) {
 	ledgerID := middleware.LedgerID(c)
 
-	var req service.ListRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	req := service.ListRequest{
+		OpType:   c.Query("op_type"),
+		Keyword:  c.Query("keyword"),
+		Page:     page,
+		PageSize: pageSize,
+	}
+
+	if start, err := queryDate(c, "start", false); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "start 格式错误，请使用 YYYY-MM-DD"})
 		return
+	} else {
+		req.Start = start
 	}
-
-	if req.Page == 0 {
-		req.Page = 1
+	if end, err := queryDate(c, "end", true); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "end 格式错误，请使用 YYYY-MM-DD"})
+		return
+	} else {
+		req.End = end
 	}
-	if req.PageSize == 0 {
-		req.PageSize = 20
-	}
-
-	// 解析时间参数
-	if s := c.Query("start"); s != "" {
-		t, err := parseTime(s)
+	if s := c.Query("month"); s != "" {
+		t, err := time.ParseInLocation("2006-01", s, time.Local)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "start 格式错误"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "month 格式错误，请使用 YYYY-MM"})
 			return
 		}
-		req.Start = &t
-	}
-	if s := c.Query("end"); s != "" {
-		t, err := parseTime(s)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "end 格式错误"})
-			return
-		}
-		req.End = &t
+		start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.Local)
+		end := start.AddDate(0, 1, 0).Add(-time.Second)
+		req.Start = &start
+		req.End = &end
 	}
 
-	// 解析数字参数
 	if s := c.Query("account_id"); s != "" {
 		v, err := strconv.ParseUint(s, 10, 64)
 		if err != nil {
@@ -233,9 +246,9 @@ func (h *TransactionHandler) List(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"list":     transactions,
-			"total":    total,
-			"page":     req.Page,
+			"list":      transactions,
+			"total":     total,
+			"page":      req.Page,
 			"page_size": req.PageSize,
 		},
 	})

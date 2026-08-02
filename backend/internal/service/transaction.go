@@ -185,16 +185,17 @@ func (s *TransactionService) Delete(ledgerID, userID, id uint) error {
 }
 
 // ListRequest 流水列表请求参数
+// start/end/account_id 等由 handler 手动解析，避免 Gin 把 YYYY-MM-DD 按 RFC3339 绑定失败
 type ListRequest struct {
-	Start      *time.Time `form:"start"`
-	End        *time.Time `form:"end"`
-	AccountID  *uint      `form:"account_id"`
-	CategoryID *uint      `form:"category_id"`
-	MemberID   *uint      `form:"member_id"`
+	Start      *time.Time `form:"-"`
+	End        *time.Time `form:"-"`
+	AccountID  *uint      `form:"-"`
+	CategoryID *uint      `form:"-"`
+	MemberID   *uint      `form:"-"`
 	OpType     string     `form:"op_type"`
 	Keyword    string     `form:"keyword"`
-	Page       int        `form:"page" binding:"required,min=1"`
-	PageSize   int        `form:"page_size" binding:"min=1,max=100"`
+	Page       int        `form:"page"`
+	PageSize   int        `form:"page_size"`
 }
 
 // List 获取流水列表
@@ -209,9 +210,10 @@ func (s *TransactionService) List(ledgerID uint, req *ListRequest) ([]model.Tran
 		query = query.Where("occurred_at <= ?", req.End)
 	}
 
-	// 账户筛选
+	// 账户筛选：本账户支出/收入，或转账转入本账户
 	if req.AccountID != nil {
-		query = query.Where("account_id = ?", *req.AccountID)
+		id := *req.AccountID
+		query = query.Where("account_id = ? OR to_account_id = ?", id, id)
 	}
 
 	// 分类筛选

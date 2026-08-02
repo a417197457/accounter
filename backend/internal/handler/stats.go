@@ -3,7 +3,6 @@ package handler
 import (
 	"net/http"
 	"strconv"
-	"time"
 
 	"accounter/backend/internal/middleware"
 	"accounter/backend/internal/service"
@@ -21,27 +20,20 @@ func NewStatsHandler() *StatsHandler {
 	return &StatsHandler{service: service.NewStatsService()}
 }
 
-// parseTimeParam 解析时间参数
-func parseTimeParam(c *gin.Context, key string) *time.Time {
-	s := c.Query(key)
-	if s == "" {
-		return nil
-	}
-	t, err := time.ParseInLocation("2006-01-02", s, time.Local)
-	if err != nil {
-		return nil
-	}
-	// end 补成当天 23:59:59
-	if key == "end" {
-		t = t.Add(24*time.Hour - time.Second)
-	}
-	return &t
-}
-
-// Overview 账本总览
+// Overview 账本总览（可选 start/end，YYYY-MM-DD；禁止 Gin 绑 time.Time）
 func (h *StatsHandler) Overview(c *gin.Context) {
 	ledgerID := middleware.LedgerID(c)
-	data, err := h.service.Overview(ledgerID)
+	start, err := queryDate(c, "start", false)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "start 格式错误，请使用 YYYY-MM-DD"})
+		return
+	}
+	end, err := queryDate(c, "end", true)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "end 格式错误，请使用 YYYY-MM-DD"})
+		return
+	}
+	data, err := h.service.Overview(ledgerID, start, end)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -56,8 +48,16 @@ func (h *StatsHandler) Trend(c *gin.Context) {
 	if granularity != "day" && granularity != "month" {
 		granularity = "day"
 	}
-	start := parseTimeParam(c, "start")
-	end := parseTimeParam(c, "end")
+	start, err := queryDate(c, "start", false)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "start 格式错误，请使用 YYYY-MM-DD"})
+		return
+	}
+	end, err := queryDate(c, "end", true)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "end 格式错误，请使用 YYYY-MM-DD"})
+		return
+	}
 	data, err := h.service.Trend(ledgerID, granularity, start, end)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -70,8 +70,16 @@ func (h *StatsHandler) Trend(c *gin.Context) {
 func (h *StatsHandler) Category(c *gin.Context) {
 	ledgerID := middleware.LedgerID(c)
 	kind := c.Query("kind")
-	start := parseTimeParam(c, "start")
-	end := parseTimeParam(c, "end")
+	start, err := queryDate(c, "start", false)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "start 格式错误，请使用 YYYY-MM-DD"})
+		return
+	}
+	end, err := queryDate(c, "end", true)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "end 格式错误，请使用 YYYY-MM-DD"})
+		return
+	}
 	data, err := h.service.CategoryBreakdown(ledgerID, kind, start, end)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

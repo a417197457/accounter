@@ -46,19 +46,24 @@ type Overview struct {
 	TotalAssets decimal.Decimal `json:"total_assets"`
 }
 
-// Overview 账本总览（全部流水的收入/支出/结余 + 未归档账户余额合计）
-func (s *StatsService) Overview(ledgerID uint) (*Overview, error) {
+// Overview 账本总览（可选时间范围的收入/支出/结余 + 未归档账户余额合计）
+func (s *StatsService) Overview(ledgerID uint, start, end *time.Time) (*Overview, error) {
 	var income, expense decimal.Decimal
 
 	rows := []struct {
 		OpType string
 		Sum    decimal.Decimal
 	}{}
-	err := s.db.Model(&model.Transaction{}).
+	query := s.db.Model(&model.Transaction{}).
 		Select("op_type, COALESCE(SUM(amount), 0) as sum").
-		Where("ledger_id = ? AND deleted_at IS NULL", ledgerID).
-		Group("op_type").
-		Scan(&rows).Error
+		Where("ledger_id = ? AND deleted_at IS NULL", ledgerID)
+	if start != nil {
+		query = query.Where("occurred_at >= ?", start)
+	}
+	if end != nil {
+		query = query.Where("occurred_at <= ?", end)
+	}
+	err := query.Group("op_type").Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("查询总览失败: %w", err)
 	}
