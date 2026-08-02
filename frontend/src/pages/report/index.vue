@@ -130,7 +130,7 @@ export default {
       const { start, end } = this.monthRange()
       try {
         const [overview, categories, trend, budgets] = await Promise.all([
-          get('/stats/overview'),
+          get('/stats/overview', { start, end }),
           get('/stats/category', { kind: 'expense', start, end }),
           get('/stats/trend', { granularity: 'day', start, end }),
           get('/budgets')

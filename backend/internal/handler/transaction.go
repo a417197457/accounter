@@ -186,25 +186,17 @@ func (h *TransactionHandler) List(c *gin.Context) {
 		PageSize: pageSize,
 	}
 
-	if s := c.Query("start"); s != "" {
-		t, err := parseTime(s)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "start 格式错误，请使用 YYYY-MM-DD"})
-			return
-		}
-		req.Start = &t
+	if start, err := queryDate(c, "start", false); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "start 格式错误，请使用 YYYY-MM-DD"})
+		return
+	} else {
+		req.Start = start
 	}
-	if s := c.Query("end"); s != "" {
-		t, err := parseTime(s)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "end 格式错误，请使用 YYYY-MM-DD"})
-			return
-		}
-		// 纯日期补到当天结束，避免漏掉 end 当天流水
-		if len(s) == 10 {
-			t = t.Add(24*time.Hour - time.Second)
-		}
-		req.End = &t
+	if end, err := queryDate(c, "end", true); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "end 格式错误，请使用 YYYY-MM-DD"})
+		return
+	} else {
+		req.End = end
 	}
 	if s := c.Query("month"); s != "" {
 		t, err := time.ParseInLocation("2006-01", s, time.Local)

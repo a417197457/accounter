@@ -323,11 +323,10 @@ func (s *Service) handleQuery(ctx context.Context, ledgerID uint, tc openai.Tool
 
 	// 调 stats overview + category
 	statsSvc := service.NewStatsService()
-	overview, _ := statsSvc.Overview(ledgerID)
-
 	now := time.Now()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	nextMonth := monthStart.AddDate(0, 1, 0)
+	overview, _ := statsSvc.Overview(ledgerID, &monthStart, &nextMonth)
 	cats, _ := statsSvc.CategoryBreakdown(ledgerID, "expense", &monthStart, &nextMonth)
 
 	// 拼接查询结果摘要
