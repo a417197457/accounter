@@ -18,35 +18,11 @@ var db *gorm.DB
 
 // NewDB 初始化数据库连接
 func NewDB(cfg *config.Config) (*gorm.DB, error) {
-	var dialector gorm.Dialector
-
-	switch cfg.DB.Driver {
-	case "sqlite":
-		dialector = sqlite.Open(cfg.SQLite.Path)
-		log.Printf("使用 SQLite 数据库: %s", cfg.SQLite.Path)
-	case "mysql":
-		if cfg.DB.DSN == "" {
-			return nil, fmt.Errorf("MySQL DSN 未配置")
-		}
-		dialector = mysql.Open(cfg.DB.DSN)
-		log.Printf("使用 MySQL 数据库: %s@%s/%s", cfg.DB.User, cfg.DB.Host, cfg.DB.Name)
-	default:
-		return nil, fmt.Errorf("不支持的数据库驱动: %s", cfg.DB.Driver)
-	}
-
-	// 日志级别：开发环境用 Warn，生产用 Silent
-	logLevel := logger.Silent
-	if cfg.IsDev() {
-		logLevel = logger.Warn
-	}
-
-	var err error
-	db, err = gorm.Open(dialector, &gorm.Config{
-		Logger: logger.Default.LogMode(logLevel),
-	})
+	connectedDB, err := openDB(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("连接数据库失败: %w", err)
+		return nil, err
 	}
+	db = connectedDB
 
 	models := model.AllModels()
 	migrationDB := db
@@ -79,6 +55,49 @@ func NewDB(cfg *config.Config) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+// NewReadOnlyDB 仅建立数据库连接，不执行自动迁移或数据修复。
+// 运维查询命令使用该入口，避免一次查询触发任何写入。
+func NewReadOnlyDB(cfg *config.Config) (*gorm.DB, error) {
+	connectedDB, err := openDB(cfg)
+	if err != nil {
+		return nil, err
+	}
+	db = connectedDB
+	return db, nil
+}
+
+func openDB(cfg *config.Config) (*gorm.DB, error) {
+	var dialector gorm.Dialector
+
+	switch cfg.DB.Driver {
+	case "sqlite":
+		dialector = sqlite.Open(cfg.SQLite.Path)
+		log.Printf("使用 SQLite 数据库: %s", cfg.SQLite.Path)
+	case "mysql":
+		if cfg.DB.DSN == "" {
+			return nil, fmt.Errorf("MySQL DSN 未配置")
+		}
+		dialector = mysql.Open(cfg.DB.DSN)
+		log.Printf("使用 MySQL 数据库: %s@%s/%s", cfg.DB.User, cfg.DB.Host, cfg.DB.Name)
+	default:
+		return nil, fmt.Errorf("不支持的数据库驱动: %s", cfg.DB.Driver)
+	}
+
+	// 日志级别：开发环境用 Warn，生产用 Silent
+	logLevel := logger.Silent
+	if cfg.IsDev() {
+		logLevel = logger.Warn
+	}
+
+	connectedDB, err := gorm.Open(dialector, &gorm.Config{
+		Logger: logger.Default.LogMode(logLevel),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("连接数据库失败: %w", err)
+	}
+	return connectedDB, nil
 }
 
 // migrateLedgerTypes 为旧账本补齐类型：个人账本保持 personal，其余默认为 family。

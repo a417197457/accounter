@@ -26,9 +26,6 @@ func main() {
 	if err := cfg.ValidateProduction(); err != nil {
 		log.Fatalf("生产配置校验失败: %v", err)
 	}
-	if _, err := repository.NewDB(cfg); err != nil {
-		log.Fatalf("数据库初始化失败: %v", err)
-	}
 	args := os.Args[1:]
 	if len(args) < 2 {
 		printUsage()
@@ -37,6 +34,9 @@ func main() {
 
 	switch args[0] {
 	case "activation-code":
+		if _, err := repository.NewDB(cfg); err != nil {
+			log.Fatalf("数据库初始化失败: %v", err)
+		}
 		svc := service.NewAIEntitlementService()
 		switch args[1] {
 		case "create":
@@ -50,6 +50,9 @@ func main() {
 			os.Exit(2)
 		}
 	case "ops":
+		if _, err := repository.NewReadOnlyDB(cfg); err != nil {
+			log.Fatalf("数据库连接失败: %v", err)
+		}
 		svc := service.NewOperationsService()
 		switch args[1] {
 		case "users":
