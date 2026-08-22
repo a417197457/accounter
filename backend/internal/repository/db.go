@@ -53,8 +53,43 @@ func NewDB(cfg *config.Config) (*gorm.DB, error) {
 	if err := syncCategoryIcons(db); err != nil {
 		log.Printf("警告: syncCategoryIcons 失败: %v", err)
 	}
+	if err := ensureIncomeGiftCategories(db); err != nil {
+		log.Printf("警告: ensureIncomeGiftCategories 失败: %v", err)
+	}
 
 	return db, nil
+}
+
+// ensureIncomeGiftCategories 为存量账本补齐收入“礼金”，避免 AI 将同名支出分类用于收入。
+func ensureIncomeGiftCategories(db *gorm.DB) error {
+	var ledgers []model.Ledger
+	if err := db.Select("id", "owner_id").Find(&ledgers).Error; err != nil {
+		return err
+	}
+	for _, ledger := range ledgers {
+		var count int64
+		if err := db.Model(&model.Category{}).
+			Where("ledger_id = ? AND name = ? AND kind = ? AND deleted_at IS NULL", ledger.ID, "礼金", "income").
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		// 新默认顺序中“礼金”位于“其他”之前，只调整仍保持旧默认顺序的记录。
+		if err := db.Model(&model.Category{}).
+			Where("ledger_id = ? AND name = ? AND kind = ? AND sort = ? AND deleted_at IS NULL", ledger.ID, "其他", "income", 6).
+			Update("sort", 7).Error; err != nil {
+			return err
+		}
+		category := model.Category{
+			LedgerID: ledger.ID, UserID: ledger.OwnerID, Name: "礼金", Kind: "income", Icon: "💌", Sort: 6,
+		}
+		if err := db.Create(&category).Error; err != nil {
+			return fmt.Errorf("为账本 %d 补齐收入礼金分类失败: %w", ledger.ID, err)
+		}
+	}
+	return nil
 }
 
 // NewReadOnlyDB 仅建立数据库连接，不执行自动迁移或数据修复。

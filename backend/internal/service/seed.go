@@ -113,6 +113,7 @@ func SeedDefaultData(db *gorm.DB, ledgerID, userID uint) error {
 		{"理财", "📈"},
 		{"兼职", "💼"},
 		{"红包", "🧧"},
+		{"礼金", "💌"},
 		{"其他", "📦"},
 	}
 

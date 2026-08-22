@@ -80,7 +80,7 @@ func (s *LedgerService) Create(userID uint, name, ledgerType string) (*model.Led
 		inviteCode = generateRandomString(6)
 		for {
 			var count int64
-			if err := tx.Model(&model.Ledger{}).Where("invite_code = ?", inviteCode).Count(&count).Error; err != nil {
+			if err := tx.Unscoped().Model(&model.Ledger{}).Where("invite_code = ?", inviteCode).Count(&count).Error; err != nil {
 				return fmt.Errorf("检查邀请码失败: %w", err)
 			}
 			if count == 0 {
@@ -107,6 +107,49 @@ func (s *LedgerService) Create(userID uint, name, ledgerType string) (*model.Led
 		return nil, "", err
 	}
 	return &ledger, inviteCode, nil
+}
+
+// Delete 删除创建者拥有的非个人账本。账本里的同步副本会一起删除，
+// 但个人账本中的源流水不受影响。
+func (s *LedgerService) Delete(ledgerID, userID uint) (*model.Ledger, error) {
+	var deletedLedger model.Ledger
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&deletedLedger, ledgerID).Error; err != nil {
+			return errors.New("账本不存在")
+		}
+		if deletedLedger.IsPersonal {
+			return errors.New("个人账本不能删除")
+		}
+		if deletedLedger.OwnerID != userID {
+			return errors.New("只有创建者可以删除账本")
+		}
+
+		// 先让同步副本退出后续源流水的级联更新范围，再清理账本附属数据。
+		if err := tx.Where("ledger_id = ?", ledgerID).Delete(&model.Transaction{}).Error; err != nil {
+			return fmt.Errorf("删除账本流水失败: %w", err)
+		}
+		if err := tx.Where("ledger_id = ?", ledgerID).Delete(&model.Account{}).Error; err != nil {
+			return fmt.Errorf("删除账本账户失败: %w", err)
+		}
+		if err := tx.Where("ledger_id = ?", ledgerID).Delete(&model.Category{}).Error; err != nil {
+			return fmt.Errorf("删除账本分类失败: %w", err)
+		}
+		for _, item := range []interface{}{
+			&model.AccountLink{}, &model.Budget{}, &model.BookkeepingPreference{}, &model.Membership{},
+		} {
+			if err := tx.Where("ledger_id = ?", ledgerID).Delete(item).Error; err != nil {
+				return fmt.Errorf("清理账本关联数据失败: %w", err)
+			}
+		}
+		if err := tx.Delete(&deletedLedger).Error; err != nil {
+			return fmt.Errorf("删除账本失败: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &deletedLedger, nil
 }
 
 // Join 通过邀请码加入账本

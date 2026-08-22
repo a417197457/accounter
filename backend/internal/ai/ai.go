@@ -515,13 +515,14 @@ func (s *Service) parseDraft(ledgerID uint, argsJSON string, preference *service
 			catName = strings.TrimSpace(catName[idx+1:])
 		}
 		catName = strings.TrimSpace(catName)
-		cat := s.findCategoryByName(ledgerID, catName)
+		categoryKind := categoryKindForOpType(args.OpType)
+		cat := s.findCategoryByName(ledgerID, catName, categoryKind)
 		if cat != nil {
 			draft.CategoryID = &cat.ID
 			draft.CategoryName = cat.Name
 		} else {
 			// 找不到子类，尝试匹配一级分类名
-			cat = s.findCategoryByName(ledgerID, args.CategoryName)
+			cat = s.findCategoryByName(ledgerID, args.CategoryName, categoryKind)
 			if cat != nil {
 				draft.CategoryID = &cat.ID
 				draft.CategoryName = cat.Name
@@ -544,10 +545,24 @@ func (s *Service) findAccountByName(ledgerID uint, name string) (model.Account, 
 	return acc, err == nil
 }
 
-// findCategoryByName 按名称查分类（一级或二级均可）
-func (s *Service) findCategoryByName(ledgerID uint, name string) *model.Category {
+func categoryKindForOpType(opType string) string {
+	if opType == "income" || opType == "borrow_in" {
+		return "income"
+	}
+	if opType == "expense" || opType == "borrow_out" {
+		return "expense"
+	}
+	return ""
+}
+
+// findCategoryByName 按名称和收支类型查分类（一级或二级均可）。
+func (s *Service) findCategoryByName(ledgerID uint, name, kind string) *model.Category {
 	var cat model.Category
-	err := s.db.Where("ledger_id = ? AND name = ? AND deleted_at IS NULL", ledgerID, name).First(&cat).Error
+	query := s.db.Where("ledger_id = ? AND name = ? AND deleted_at IS NULL", ledgerID, name)
+	if kind != "" {
+		query = query.Where("kind = ?", kind)
+	}
+	err := query.First(&cat).Error
 	if err != nil {
 		return nil
 	}

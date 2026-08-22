@@ -74,6 +74,23 @@ func (h *LedgerHandler) Create(c *gin.Context) {
 	})
 }
 
+// Delete 删除创建者拥有的非个人账本。
+func (h *LedgerHandler) Delete(c *gin.Context) {
+	userID := middleware.UserID(c)
+	ledgerID := getUintParam(c, "id")
+	ledger, err := h.service.Delete(ledgerID, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	observability.Event(c, "ledger_deleted",
+		"deleted_ledger_id", ledger.ID,
+		"ledger_type", ledger.Type,
+		"ledger_name", ledger.Name,
+	)
+	c.JSON(http.StatusOK, gin.H{"data": "ok"})
+}
+
 // Join 加入账本
 func (h *LedgerHandler) Join(c *gin.Context) {
 	userID := middleware.UserID(c)

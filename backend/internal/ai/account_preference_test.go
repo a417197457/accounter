@@ -70,3 +70,29 @@ func TestParseDraftStrictModeRequiresExplicitAccount(t *testing.T) {
 		t.Fatalf("want account detail error, got %v", err)
 	}
 }
+
+func TestParseDraftMatchesIncomeCategoryKind(t *testing.T) {
+	svc, ledger, alipay, _ := setupAIAccountPreferenceTest(t)
+	expenseGift := model.Category{LedgerID: ledger.ID, UserID: ledger.OwnerID, Name: "礼金", Kind: "expense", Icon: "🧧"}
+	incomeGift := model.Category{LedgerID: ledger.ID, UserID: ledger.OwnerID, Name: "礼金", Kind: "income", Icon: "💌"}
+	if err := svc.db.Create(&expenseGift).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.db.Create(&incomeGift).Error; err != nil {
+		t.Fatal(err)
+	}
+	pref := &service.BookkeepingPreferenceView{
+		AccountMode: "default", DefaultAccountID: alipay.ID,
+		DefaultAccountName: alipay.Name, DefaultAccountLabel: "支付宝余额",
+	}
+	draft, err := svc.parseDraft(ledger.ID,
+		`{"op_type":"income","amount":"1688","account_name":"支付宝","account_specified":false,"category_name":"礼金"}`,
+		pref,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.CategoryID == nil || *draft.CategoryID != incomeGift.ID {
+		t.Fatalf("income gift category mismatch: %+v", draft)
+	}
+}

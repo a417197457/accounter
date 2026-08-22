@@ -3,7 +3,7 @@
     <WebSidebar />
     <view class="subpage-head">
       <text class="back-link" @click="goBack">‹ 返回</text>
-      <view>
+      <view class="title-block">
         <text class="page-title">我的账本</text>
         <text class="page-copy">集中管理个人、家庭、旅游和礼账账本</text>
       </view>
@@ -33,6 +33,9 @@
           <view class="ledger-actions" v-if="!ledger.is_personal" @click.stop>
             <text v-if="ledger.role === 'owner'" @click="showInviteModal(ledger)">邀请码</text>
             <text @click="showMembers(ledger)">成员</text>
+            <text class="danger" v-if="ledger.role === 'owner'" @click="deleteLedger(ledger)">
+              {{ deletingLedgerID === ledger.id ? '删除中' : '删除' }}
+            </text>
             <text class="danger" v-if="ledger.role === 'member'" @click="leaveLedger(ledger)">退出</text>
           </view>
         </view>
@@ -136,7 +139,8 @@ export default {
       currentLedger: null,
       showInvite: false,
       showMember: false,
-      members: []
+      members: [],
+      deletingLedgerID: 0
     }
   },
   computed: {
@@ -281,6 +285,28 @@ export default {
           }
         }
       })
+    },
+    deleteLedger(ledger) {
+      if (this.deletingLedgerID) return
+      uni.showModal({
+        title: '删除账本',
+        content: `确定删除「${ledger.name}」吗？账本成员和同步记录会被删除，个人账本中的原流水不会受影响。`,
+        confirmText: '确认删除',
+        confirmColor: '#df665d',
+        success: async result => {
+          if (!result.confirm) return
+          this.deletingLedgerID = ledger.id
+          try {
+            await del(`/ledgers/${ledger.id}`)
+            await this.loadLedgers()
+            uni.showToast({ title: '账本已删除', icon: 'success' })
+          } catch (err) {
+            uni.showToast({ title: err.message || '删除失败', icon: 'none' })
+          } finally {
+            this.deletingLedgerID = 0
+          }
+        }
+      })
     }
   }
 }
@@ -288,8 +314,9 @@ export default {
 
 <style scoped>
 .page { min-height: 100vh; padding: 22px 16px 40px; box-sizing: border-box; background: #f7f9f7; }
-.subpage-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
-.back-link { padding: 5px 0; color: #42a987; font-size: 14px; }
+.subpage-head { display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin-bottom: 18px; }
+.back-link { align-self: flex-start; padding: 4px 0; color: #42a987; font-size: 14px; }
+.title-block { min-width: 0; }
 .page-title { display: block; color: #18312b; font-size: 26px; font-weight: 750; }
 .page-copy { display: block; margin-top: 5px; color: #87968f; font-size: 12px; }
 .limit-card { display: flex; align-items: center; justify-content: space-between; padding: 18px; margin-bottom: 14px; border-radius: 18px; background: #eaf7f2; border: 1px solid #d7eee5; }
@@ -310,7 +337,7 @@ export default {
 .ledger-badge, .owner-badge { padding: 2px 7px; border-radius: 999px; color: #2fa680; background: #eaf7f2; font-size: 10px; }
 .owner-badge { color: #a16c20; background: #fff4dc; }
 .ledger-meta { display: block; margin-top: 6px; color: #8a9993; font-size: 12px; }
-.ledger-actions { display: flex; gap: 16px; margin-top: 10px; color: #35a783; font-size: 12px; }
+.ledger-actions { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 10px; color: #35a783; font-size: 12px; }
 .ledger-actions .danger, .remove-member { color: #e06a62; }
 .chevron { color: #a7b2ad; font-size: 25px; }
 .empty { padding: 35px; text-align: center; color: #8a9993; background: #fff; border-radius: 18px; }
@@ -320,7 +347,7 @@ export default {
 .join-row { display: flex; gap: 10px; margin-top: 14px; }
 .input { height: 42px; padding: 0 12px; box-sizing: border-box; border: 1px solid #dfe8e4; border-radius: 12px; background: #fbfcfb; font-size: 14px; }
 .join-input { flex: 1; min-width: 0; }
-.join-button { width: 76px; padding: 0; }
+.join-button { width: 76px; height: 42px; padding: 0; display: flex; align-items: center; justify-content: center; line-height: 1; }
 .modal { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; background: rgba(24,49,43,.34); }
 .modal-content { width: 82%; max-width: 380px; max-height: 78vh; overflow-y: auto; padding: 23px; box-sizing: border-box; border-radius: 20px; background: #fff; }
 .modal-title { display: block; margin-bottom: 17px; text-align: center; color: #263f38; font-size: 18px; font-weight: 700; }
