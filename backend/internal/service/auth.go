@@ -64,6 +64,7 @@ func (s *AuthService) Register(username, password, nickname string) (*model.User
 			Name:       user.Nickname + "的个人账本",
 			OwnerID:    user.ID,
 			IsPersonal: true,
+			Type:       model.LedgerTypePersonal,
 			InviteCode: generateRandomString(6),
 		}
 		if err := tx.Create(&ledger).Error; err != nil {
@@ -204,7 +205,7 @@ func createWechatUser(tx *gorm.DB, user *model.User, openID string, phone *strin
 		return fmt.Errorf("创建微信用户失败: %w", err)
 	}
 	ledger := model.Ledger{
-		Name: "我的个人账本", OwnerID: user.ID, IsPersonal: true, InviteCode: model.GenInviteCode(),
+		Name: "我的个人账本", OwnerID: user.ID, IsPersonal: true, Type: model.LedgerTypePersonal, InviteCode: model.GenInviteCode(),
 	}
 	if err := tx.Create(&ledger).Error; err != nil {
 		return fmt.Errorf("创建个人账本失败: %w", err)

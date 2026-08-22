@@ -2,6 +2,7 @@ package model
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -28,10 +29,44 @@ type Ledger struct {
 	Name       string         `gorm:"size:64;not null" json:"name"`
 	OwnerID    uint           `gorm:"not null;index" json:"owner_id"`
 	IsPersonal bool           `gorm:"default:false" json:"is_personal"`
+	Type       string         `gorm:"size:16;not null;default:family;index" json:"type"`
 	InviteCode string         `gorm:"size:16;uniqueIndex" json:"invite_code,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
 	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+const (
+	LedgerTypePersonal = "personal"
+	LedgerTypeFamily   = "family"
+	LedgerTypeTravel   = "travel"
+	LedgerTypeGift     = "gift"
+)
+
+// ValidLedgerType 检查账本类型是否为系统支持的类型。
+func ValidLedgerType(ledgerType string) bool {
+	switch ledgerType {
+	case LedgerTypePersonal, LedgerTypeFamily, LedgerTypeTravel, LedgerTypeGift:
+		return true
+	default:
+		return false
+	}
+}
+
+// BeforeSave 兼容旧数据和旧调用方，并确保 type 与 is_personal 始终一致。
+func (l *Ledger) BeforeSave(_ *gorm.DB) error {
+	if l.Type == "" {
+		if l.IsPersonal {
+			l.Type = LedgerTypePersonal
+		} else {
+			l.Type = LedgerTypeFamily
+		}
+	}
+	if !ValidLedgerType(l.Type) {
+		return fmt.Errorf("不支持的账本类型: %s", l.Type)
+	}
+	l.IsPersonal = l.Type == LedgerTypePersonal
+	return nil
 }
 
 // Membership 账本成员关系

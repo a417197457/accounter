@@ -46,8 +46,14 @@ func (s *LedgerService) ListForUser(userID uint) ([]LedgerWithRole, error) {
 	return results, nil
 }
 
-// Create 创建家庭账本
-func (s *LedgerService) Create(userID uint, name string) (*model.Ledger, string, error) {
+// Create 创建家庭、旅游或礼账账本。个人账本由注册流程自动创建。
+func (s *LedgerService) Create(userID uint, name, ledgerType string) (*model.Ledger, string, error) {
+	if ledgerType == "" {
+		ledgerType = model.LedgerTypeFamily
+	}
+	if !model.ValidLedgerType(ledgerType) || ledgerType == model.LedgerTypePersonal {
+		return nil, "", errors.New("账本类型只支持家庭、旅游或礼账")
+	}
 	// 生成邀请码
 	inviteCode := generateRandomString(6)
 
@@ -66,6 +72,7 @@ func (s *LedgerService) Create(userID uint, name string) (*model.Ledger, string,
 		Name:       name,
 		OwnerID:    userID,
 		IsPersonal: false,
+		Type:       ledgerType,
 		InviteCode: inviteCode,
 	}
 

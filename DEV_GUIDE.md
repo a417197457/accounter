@@ -1,6 +1,6 @@
 # accounter 开发文档（供新环境 / 新模型接手）
 
-> AI 中文记账 App：一句话记账 · 语音记账 · 智能查询 · 报表可视化 · 家庭共享账本。
+> AI 中文记账 App：一句话记账 · 语音记账 · 智能查询 · 报表可视化 · 多类型共享账本。
 > 本文档目标：让接手者**不看历史对话**也能完整理解现状、对齐所有功能与约定，并避免重复踩坑。
 > **上线目标**：优先网页端 + 微信小程序；部署在**阿里云 ECS + RDS MySQL**。
 > 仓库是 git 仓库，改动请走标准 git 工作流（commit / branch / PR）。
@@ -8,7 +8,7 @@
 
 ### 当前实现状态（2026-08-07 首版终检）
 
-- **已落地**：个人/家庭账本、手动+AI/语音记账（个人账本）、`PushToLedger` / `PushMonth` 单向同步、改删源级联副本、明细/报表账本切换、当月 overview（`start`/`end`）、预算设置 UI、个人账户管理。
+- **已落地**：个人/家庭/旅游/礼账账本、手动+AI/语音记账（个人账本）、`PushToLedger` / `PushMonth` 单向同步、改删源级联副本、目标账本单独移除副本、明细/报表账本切换、当月 overview（`start`/`end`）、预算设置 UI、个人账户管理。
 - **首期已纳入**：微信 openid 登录、麦克风用途声明、录音前微信隐私授权弹层、H5/小程序构建检查、ECS systemd + Nginx 部署模板。小程序后台隐私指引、内容安全策略和真机审核仍属于上线前人工任务。
 - **终检通过**：`go test ./...`、`go vet ./...`、`govulncheck ./...`（可调用漏洞 0）、H5 build、小程序 build/check、独立 SQLite E2E；小程序构建约 540KB。
 - **自测脚本**：后端起好后可跑 `bash backend/e2e_test.sh`（默认打 `127.0.0.1:18080`）。
@@ -216,7 +216,7 @@ ai:
 
 ```go
 User        { ID, Username(uniq), PasswordHash(json:"-"), Nickname, 软删除 }
-Ledger      { ID, Name, OwnerID, IsPersonal bool, InviteCode(size:16), CreatedAt }   // 账本
+Ledger      { ID, Name, OwnerID, IsPersonal bool, Type(personal|family|travel|gift), InviteCode(size:16), CreatedAt }   // 账本
 Membership  { ID, LedgerID, UserID, Role(owner|member), Alias, uniqueIndex(ledger,user) } // 成员关系
 Account     { ID, LedgerID, UserID(创建者), Name, Type(alipay|wechat|cash|savings|credit),
               Balance decimal(18,2), Sort, IsArchived, LinkedAccounts(响应填充), 软删除 }
@@ -275,7 +275,7 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 账本管理（需登录）：
 
 - `GET /ledgers` → 我加入的账本列表 `[{...ledger, role, member_count}]`（个人账本在前）
-- `POST /ledgers {name}` → 创建家庭账本（生成邀请码 + 播种默认账户/分类）
+- `POST /ledgers {name,type?}` → 创建家庭/旅游/礼账账本（`type` 缺省为 `family`，生成邀请码 + 播种默认账户/分类）
 - `POST /ledgers/join {code}` → 邀请码加入（幂等）
 - `GET /ledgers/:id/members` → 成员列表 `[{user_id,username,nickname,alias,role}]`
 - `DELETE /ledgers/:id/members/:uid` → owner 移除成员
@@ -302,10 +302,10 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 
 ## 6. 关键业务规则（务必对齐）
 
-1. **记账只在个人账本**：`TransactionService.Create` 与 `AIConfirm` 均校验个人账本，非个人账本直接记账一律拒绝「家庭账本不能直接记账，请在个人账本记账后同步过来」。家庭账本数据**只能通过同步**（`PushToLedger` 走内部 `createInternal`，跳过个人账本守卫）。同步副本（`SourceID != nil`）禁止 Update/Delete。
+1. **记账只在个人账本**：`TransactionService.Create` 与 `AIConfirm` 均校验个人账本，其他类型账本直接记账一律拒绝。家庭/旅游/礼账账本数据**只能通过同步**（`PushToLedger` 走内部 `createInternal`，跳过个人账本守卫）。同步副本（`SourceID != nil`）禁止 Update，但允许从当前目标账本单独删除。
 2. **前端无全局"当前账本"切换**：记账页（record/chat）请求不带 `X-Ledger-Id` → 后端默认个人账本。只有**明细/报表**页可切换查看账本（只读）。
-3. **家庭账本明细只读**：查看家庭账本时不能删除/推送/整月同步，仅展示 + 显示记账成员。
-4. **同步是单向镜像**：源（个人账本）→ 家庭副本。改源自动改副本，删源级联删副本；改副本不影响源。
+3. **目标账本明细只读**：查看家庭/旅游/礼账账本时不能新增或修改流水，仅展示 + 显示同步成员；可单独移除同步副本。
+4. **同步是单向镜像**：源（个人账本）→ 目标账本副本。改源自动改仍存在的副本，删源级联删副本；删除目标副本不影响源，并允许后续重新同步。
 5. **AI 账户策略由后端强制执行**：`default` 便捷模式下，完全没说账户时草稿强制覆盖为设置的默认账户；只说支付宝/微信可直接按该渠道余额记。`strict` 精确模式下，未明确到余额或具体卡时不生成可确认草稿，必须先追问。不能只依赖模型提示词。
 
 ---
@@ -367,7 +367,7 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 - `LedgerService`：`ListForUser / Create(邀请码) / Join / Members / RemoveMember / Leave / Role / IsPersonal / PersonalLedgerID`。邀请码 `genInviteCode` 用 `crypto/rand` 生成 6 位（去掉易混字符）。
 - **推送/同步**（`transaction.go`）：
   - `mapAccountToLedger` / `mapCategoryToLedger`：按**名称**把账户/分类映射到目标账本（账户找不到用第一个，分类找不到留空）。
-  - `PushToLedger(srcLedgerID, srcID, targetLedgerID, userID)`：复制一份到目标账本，`SourceID=srcID`，防重复（目标已有该 source 则拒绝）。转账不支持推送。
+  - `PushToLedger(srcLedgerID, srcID, targetLedgerID, userID)`：复制一份到家庭/旅游/礼账账本，`SourceID=srcID`，防重复（目标已有该 source 则拒绝）。转账不支持推送。
   - `PushMonth(srcLedgerID, month, targetLedgerID, userID)`：遍历该月 income/expense 流水逐笔 PushToLedger，返回 `{pushed, skipped}`。
   - `syncCopies(src)`：改源后同步所有副本（重映射账户/分类 + 撤销旧余额+应用新余额）。
   - `deleteCopies(srcID)`：删源后级联删副本。
@@ -384,7 +384,7 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
   - `record` 记一笔：支持支出/收入/转账还款；账户弹层按“支付宝、微信、直接账户”分组，支付渠道内再选择余额或关联卡；功能行统一使用 `static/ui/*.svg` 线性图标。
   - `list` 明细：**按月折叠 + 按日期分组**，月份头显示笔数/收支；分类图标使用统一圆形底；每笔提供可见的更多操作，不再只依赖长按。
   - `report` 报表：总览采用“本月结余 + 2×2 收入/支出/转账/净资产”；月度日历热力图支持支出/收入/结余三种口径，点击日期按需加载当天明细；每日趋势同时显示收入和支出，分类占比使用饼图和百分比。
-  - `profile` 我的：保留用户、账本、加入家庭与管理入口；“AI 记账方式”可切换便捷/精确模式，并选择支付宝/微信余额、关联卡或直接账户作为默认支付路径。
+  - `profile` 我的：保留用户、账本、加入共享账本与管理入口；创建时可选择家庭/旅游/礼账类型；“AI 记账方式”可切换便捷/精确模式，并选择支付宝/微信余额、关联卡或直接账户作为默认支付路径。
   - `account` 账户管理（非 tab 页）：按支付渠道/资产/负债分组，展示总资产、信用卡欠款和净资产，负责账户关联与归档。
   - `category` 分类管理（非 tab 页）：独立管理一级/二级分类、折叠和图标选择。
   - `login`：登录/注册，登录时 `removeStorageSync(LEDGER_KEY)`。
@@ -520,7 +520,7 @@ DB_DRIVER=sqlite SQLITE_PATH=./e2e-test.db JWT_SECRET=dev-secret SERVER_PORT=180
 bash e2e_test.sh
 ```
 
-脚本覆盖：注册个人账本 → 创建/加入家庭 → 个人记账 → 家庭直接记账被拒 → 单笔推送 → 重复推送拒绝 → 删源级联删副本 → 当月 overview。
+脚本覆盖：注册个人账本 → 创建/加入旅游账本 → 个人记账 → 目标账本直接记账被拒 → 单笔同步 → 重复同步拒绝 → 单独删除副本不影响源 → 重新同步 → 删源级联删副本 → 当月 overview。
 
 ---
 

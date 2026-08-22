@@ -191,6 +191,7 @@ func getOrCreatePersonalLedger(db *gorm.DB, uid uint) (uint, error) {
 			Name:       "我的个人账本",
 			OwnerID:    uid,
 			IsPersonal: true,
+			Type:       model.LedgerTypePersonal,
 			InviteCode: model.GenInviteCode(),
 		}
 		if err := tx.Create(&ledger).Error; err != nil {

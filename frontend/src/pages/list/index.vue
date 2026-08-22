@@ -18,13 +18,13 @@
       </view>
     </view>
 
-    <view v-if="isFamily" class="hint">家庭账本只读，数据来自成员同步</view>
+    <view v-if="isSharedLedger" class="hint">{{ ledgerTypeLabel(currentLedger) }}只展示同步流水，可在这里单独移除副本</view>
 
     <view v-if="groupedTransactions.length === 0" class="empty">
       <text class="empty-title">暂无流水</text>
-      <text class="empty-tip" v-if="!isFamily">用 AI 说话记账，或手动记一笔</text>
+      <text class="empty-tip" v-if="!isSharedLedger">用 AI 说话记账，或手动记一笔</text>
       <text class="empty-tip" v-else>成员从个人账本同步后，账单会出现在这里</text>
-      <view class="empty-actions" v-if="!isFamily">
+      <view class="empty-actions" v-if="!isSharedLedger">
         <button class="btn btn-primary" @click="goChat">AI 记账</button>
         <button class="btn btn-secondary" @click="goRecord">记一笔</button>
       </view>
@@ -41,7 +41,7 @@
           </view>
           <view class="month-actions">
             <text
-              v-if="!isFamily && familyLedgers.length > 0"
+              v-if="!isSharedLedger && targetLedgers.length > 0"
               class="sync-month"
               @click.stop="pushMonth(group.month)"
             >⇪ 同步</text>
@@ -71,12 +71,12 @@
                 <text class="tx-remark" v-if="tx.remark">{{ tx.remark }}</text>
                 <text class="tx-meta">
                   {{ accountRoute(tx) }}<text v-if="formatDateTime(tx.occurred_at)"> · {{ formatDateTime(tx.occurred_at) }}</text>
-                  <text v-if="isFamily && tx.member"> · {{ tx.member.nickname || tx.member.username }}</text>
+                  <text v-if="isSharedLedger && tx.member"> · {{ tx.member.nickname || tx.member.username }}</text>
                 </text>
               </view>
               <view class="tx-side">
                 <text class="tx-amount" :class="tx.op_type">{{ formatAmount(tx) }}</text>
-                <text class="tx-more" v-if="!isFamily" @click.stop="showTxActions(tx)">•••</text>
+                <text class="tx-more" v-if="!isSharedLedger || tx.source_id" @click.stop="showTxActions(tx)">•••</text>
               </view>
             </view>
           </view>
@@ -84,17 +84,17 @@
       </view>
     </view>
 
-    <!-- 推送到家庭 -->
+    <!-- 选择同步目标账本 -->
     <view class="modal" v-if="showPush" @tap="showPush = false">
       <view class="modal-content" @tap.stop>
-        <text class="modal-title">推送到家庭账本</text>
+        <text class="modal-title">选择同步到哪个账本</text>
         <view
           class="list-item"
-          v-for="fl in familyLedgers"
-          :key="fl.id"
-          @click="doPush(fl)"
+          v-for="ledger in targetLedgers"
+          :key="ledger.id"
+          @click="doPush(ledger)"
         >
-          <text>{{ fl.name }}</text>
+          <text>{{ ledger.name }} · {{ ledgerTypeLabel(ledger) }}</text>
         </view>
         <button class="btn btn-secondary" @click="showPush = false">取消</button>
       </view>
@@ -119,10 +119,10 @@ export default {
     }
   },
   computed: {
-    isFamily() {
+    isSharedLedger() {
       return this.currentLedger && !this.currentLedger.is_personal
     },
-    familyLedgers() {
+    targetLedgers() {
       return (this.ledgers || []).filter(l => !l.is_personal)
     }
   },
@@ -276,35 +276,39 @@ export default {
       }
       return result
     },
+    ledgerTypeLabel(ledger) {
+      const labels = { personal: '个人账本', family: '家庭账本', travel: '旅游账本', gift: '礼账账本' }
+      return labels[ledger?.type] || (ledger?.is_personal ? '个人账本' : '家庭账本')
+    },
     onLongPress(tx) {
-      if (this.isFamily) return
+      if (this.isSharedLedger && !tx.source_id) return
       this.showTxActions(tx)
     },
     onTap(tx) {
       // H5 长按不便时，个人账本点击也可操作
-      if (this.isFamily) return
+      if (this.isSharedLedger && !tx.source_id) return
       // #ifdef H5
       this.showTxActions(tx)
       // #endif
     },
     showTxActions(tx) {
-      const itemList = ['删除']
-      if (this.familyLedgers.length > 0 && (tx.op_type === 'expense' || tx.op_type === 'income')) {
-        itemList.unshift('推送到家庭')
+      const itemList = [tx.source_id ? '从本账本移除' : '删除原流水']
+      if (!tx.source_id && this.targetLedgers.length > 0 && (tx.op_type === 'expense' || tx.op_type === 'income')) {
+        itemList.unshift('同步到账本')
       }
       uni.showActionSheet({
         itemList,
         success: (res) => {
           const action = itemList[res.tapIndex]
-          if (action === '推送到家庭') {
+          if (action === '同步到账本') {
             this.pushTargetTx = tx
             this.pushMonthValue = ''
-            if (this.familyLedgers.length === 1) {
-              this.doPush(this.familyLedgers[0])
+            if (this.targetLedgers.length === 1) {
+              this.doPush(this.targetLedgers[0])
             } else {
               this.showPush = true
             }
-          } else if (action === '删除') {
+          } else {
             this.deleteTx(tx)
           }
         }
@@ -313,7 +317,9 @@ export default {
     async deleteTx(tx) {
       uni.showModal({
         title: '确认删除',
-        content: '删除后家庭账本中的同步副本也会一并删除',
+        content: tx.source_id
+          ? `只会从「${this.currentLedger?.name || '当前账本'}」移除这条同步记录，不会删除个人账本中的原流水`
+          : '删除个人账本中的原流水后，其他账本里仍存在的同步记录也会一并删除',
         success: async (res) => {
           if (!res.confirm) return
           try {
@@ -327,40 +333,40 @@ export default {
       })
     },
     pushMonth(month) {
-      if (this.familyLedgers.length === 0) {
-        uni.showToast({ title: '请先创建或加入家庭账本', icon: 'none' })
+      if (this.targetLedgers.length === 0) {
+        uni.showToast({ title: '请先创建或加入其他账本', icon: 'none' })
         return
       }
       this.pushTargetTx = null
       this.pushMonthValue = month
-      if (this.familyLedgers.length === 1) {
-        this.doPush(this.familyLedgers[0])
+      if (this.targetLedgers.length === 1) {
+        this.doPush(this.targetLedgers[0])
       } else {
         this.showPush = true
       }
     },
-    async doPush(familyLedger) {
+    async doPush(targetLedger) {
       this.showPush = false
       try {
         if (this.pushMonthValue) {
           const result = await post('/push-month', {
             month: this.pushMonthValue,
-            target_ledger_id: familyLedger.id
+            target_ledger_id: targetLedger.id
           }, { ledgerId: this.currentLedger.id })
           const pushed = result?.pushed ?? 0
           const skipped = result?.skipped ?? 0
           uni.showToast({
             title: pushed === 0
               ? (skipped > 0 ? '本月已全部同步过' : '本月没有可同步流水')
-              : `已同步 ${pushed} 笔到「${familyLedger.name}」`,
+              : `已同步 ${pushed} 笔到「${targetLedger.name}」`,
             icon: 'none',
             duration: 2500
           })
         } else if (this.pushTargetTx) {
           await post(`/transactions/${this.pushTargetTx.id}/push`, {
-            target_ledger_id: familyLedger.id
+            target_ledger_id: targetLedger.id
           }, { ledgerId: this.currentLedger.id })
-          uni.showToast({ title: `已同步到「${familyLedger.name}」`, icon: 'success' })
+          uni.showToast({ title: `已同步到「${targetLedger.name}」`, icon: 'success' })
         }
       } catch (err) {
         uni.showToast({ title: err.message || '同步失败', icon: 'none' })

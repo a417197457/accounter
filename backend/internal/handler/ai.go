@@ -185,7 +185,7 @@ func (h *AIHandler) Confirm(c *gin.Context) {
 		return
 	}
 	if !isPersonal {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "家庭账本不能直接记账，请在个人账本记账后同步过来"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该账本不能直接记账，请在个人账本记账后同步过来"})
 		return
 	}
 

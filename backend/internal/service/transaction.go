@@ -24,12 +24,12 @@ func NewTransactionService() *TransactionService {
 }
 
 var (
-	errFamilyDirectCreate = errors.New("家庭账本不能直接记账，请在个人账本记账后同步过来")
+	errSharedDirectCreate = errors.New("该账本不能直接记账，请在个人账本记账后同步过来")
 	errCopyReadOnly       = errors.New("同步副本只读，请在个人账本修改源流水")
-	errTransferNoPush     = errors.New("转账/借入借出不支持推送到家庭账本")
+	errTransferNoPush     = errors.New("转账/借入借出不支持同步到其他账本")
 	errAlreadyPushed      = errors.New("该流水已同步到目标账本")
 	errNotPersonalSource  = errors.New("只能从个人账本推送流水")
-	errTargetMustFamily   = errors.New("只能推送到家庭账本")
+	errTargetMustShared   = errors.New("只能同步到家庭、旅游或礼账账本")
 	errNotMember          = errors.New("你不是该账本成员")
 )
 
@@ -174,7 +174,7 @@ func (s *TransactionService) assertPersonalLedger(ledgerID uint) error {
 		return errors.New("账本不存在")
 	}
 	if !ledger.IsPersonal {
-		return errFamilyDirectCreate
+		return errSharedDirectCreate
 	}
 	return nil
 }
@@ -265,14 +265,22 @@ func (s *TransactionService) Update(ledgerID, userID, id uint, next *model.Trans
 	return result, nil
 }
 
-// Delete 删除流水（副本只读；删除后级联删副本）
+// Delete 删除流水。删除同步副本只影响当前账本；删除源流水会级联删除所有副本。
 func (s *TransactionService) Delete(ledgerID, userID, id uint) error {
 	var t model.Transaction
 	if err := s.db.First(&t, "id = ? AND ledger_id = ?", id, ledgerID).Error; err != nil {
 		return errors.New("流水不存在")
 	}
 	if t.SourceID != nil {
-		return errCopyReadOnly
+		return s.db.Transaction(func(tx *gorm.DB) error {
+			if err := s.applyBalance(tx, &t, -1); err != nil {
+				return err
+			}
+			if err := tx.Delete(&t).Error; err != nil {
+				return fmt.Errorf("删除同步流水失败: %w", err)
+			}
+			return nil
+		})
 	}
 	if err := s.assertPersonalLedger(ledgerID); err != nil {
 		return err
@@ -470,7 +478,7 @@ func (s *TransactionService) mapCategoryToLedger(srcCategoryID *uint, targetLedg
 	return &target.ID, nil
 }
 
-// PushToLedger 将个人账本流水推送到家庭账本
+// PushToLedger 将个人账本流水同步到其他类型账本
 func (s *TransactionService) PushToLedger(srcLedgerID, srcID, targetLedgerID, userID uint) (*model.Transaction, error) {
 	if !s.isMember(srcLedgerID, userID) || !s.isMember(targetLedgerID, userID) {
 		return nil, errNotMember
@@ -487,7 +495,7 @@ func (s *TransactionService) PushToLedger(srcLedgerID, srcID, targetLedgerID, us
 		return nil, errors.New("目标账本不存在")
 	}
 	if targetLedger.IsPersonal {
-		return nil, errTargetMustFamily
+		return nil, errTargetMustShared
 	}
 
 	var src model.Transaction
@@ -538,7 +546,7 @@ type PushMonthResult struct {
 	Skipped int `json:"skipped"`
 }
 
-// PushMonth 整月推送个人账本 income/expense 到家庭账本
+// PushMonth 整月同步个人账本 income/expense 到其他类型账本
 func (s *TransactionService) PushMonth(srcLedgerID uint, month string, targetLedgerID, userID uint) (*PushMonthResult, error) {
 	t, err := time.ParseInLocation("2006-01", month, time.Local)
 	if err != nil {

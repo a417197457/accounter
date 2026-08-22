@@ -172,12 +172,22 @@ func (h *TransactionHandler) Delete(c *gin.Context) {
 	ledgerID := middleware.LedgerID(c)
 	userID := middleware.UserID(c)
 	id := getUintParam(c, "id")
+	existing, _ := h.service.Get(ledgerID, id)
 
 	if err := h.service.Delete(ledgerID, userID, id); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	observability.Event(c, "transaction_deleted", "transaction_id", id)
+	isSyncedCopy := existing != nil && existing.SourceID != nil
+	sourceTransactionID := uint(0)
+	if isSyncedCopy {
+		sourceTransactionID = *existing.SourceID
+	}
+	observability.Event(c, "transaction_deleted",
+		"transaction_id", id,
+		"is_synced_copy", isSyncedCopy,
+		"source_transaction_id", sourceTransactionID,
+	)
 
 	c.JSON(http.StatusOK, gin.H{"data": "ok"})
 }
@@ -296,7 +306,7 @@ type PushRequest struct {
 	TargetLedgerID uint `json:"target_ledger_id" binding:"required"`
 }
 
-// Push 单笔推送到家庭账本
+// Push 单笔同步到其他类型账本
 func (h *TransactionHandler) Push(c *gin.Context) {
 	srcLedgerID := middleware.LedgerID(c)
 	userID := middleware.UserID(c)
@@ -328,7 +338,7 @@ type PushMonthRequest struct {
 	TargetLedgerID uint   `json:"target_ledger_id" binding:"required"`
 }
 
-// PushMonth 整月推送到家庭账本
+// PushMonth 整月同步到其他类型账本
 func (h *TransactionHandler) PushMonth(c *gin.Context) {
 	srcLedgerID := middleware.LedgerID(c)
 	userID := middleware.UserID(c)

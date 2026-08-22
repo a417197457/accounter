@@ -21,6 +21,7 @@
           <view class="ledger-name-row">
             <text class="ledger-name">{{ ledger.name }}</text>
             <text class="ledger-badge" v-if="ledger.is_personal">个人</text>
+            <text class="ledger-badge type" v-else>{{ ledgerTypeLabel(ledger) }}</text>
             <text class="ledger-badge owner" v-if="ledger.role === 'owner' && !ledger.is_personal">创建者</text>
           </view>
           <text class="ledger-meta">{{ ledger.member_count }} 位成员</text>
@@ -45,7 +46,7 @@
 
     <view class="section">
       <view class="section-header">
-        <text class="section-title">加入家庭账本</text>
+        <text class="section-title">加入共享账本</text>
       </view>
       <view class="card">
         <view class="join-row">
@@ -158,8 +159,21 @@
 
     <view class="modal" v-if="showCreate" @tap="showCreate = false">
       <view class="modal-content" @tap.stop>
-        <text class="modal-title">创建家庭账本</text>
-        <input class="input create-input" v-model="newLedgerName" placeholder="账本名称，如：我家" maxlength="64" />
+        <text class="modal-title">创建新账本</text>
+        <text class="field-label">账本类型</text>
+        <view class="ledger-type-options">
+          <view
+            class="ledger-type-option"
+            :class="{ selected: newLedgerType === item.value }"
+            v-for="item in ledgerTypes"
+            :key="item.value"
+            @click="newLedgerType = item.value"
+          >
+            <text class="ledger-type-icon">{{ item.icon }}</text>
+            <text>{{ item.label }}</text>
+          </view>
+        </view>
+        <input class="input create-input" v-model="newLedgerName" :placeholder="newLedgerPlaceholder" maxlength="64" />
         <view class="modal-actions">
           <button class="btn btn-secondary" @click="showCreate = false">取消</button>
           <button class="btn btn-primary" @click="createLedger" :loading="createLoading">创建</button>
@@ -171,7 +185,7 @@
       <view class="modal-content" @tap.stop>
         <text class="modal-title">邀请码</text>
         <text class="invite-code">{{ currentLedger?.invite_code }}</text>
-        <text class="invite-tip">分享邀请码给家人即可加入账本</text>
+        <text class="invite-tip">分享邀请码给需要共同查看账本的人</text>
         <button class="btn btn-primary" @click="copyInvite">复制邀请码</button>
       </view>
     </view>
@@ -365,6 +379,12 @@ export default {
       joinLoading: false,
       showCreate: false,
       newLedgerName: '',
+      newLedgerType: 'family',
+      ledgerTypes: [
+        { value: 'family', label: '家庭', icon: '🏠', placeholder: '账本名称，如：我们家' },
+        { value: 'travel', label: '旅游', icon: '✈️', placeholder: '账本名称，如：云南之旅' },
+        { value: 'gift', label: '礼账', icon: '🧧', placeholder: '账本名称，如：婚礼礼账' }
+      ],
       createLoading: false,
       showInvite: false,
       showMember: false,
@@ -436,6 +456,9 @@ export default {
       if (payment) return `${payment.name} · ${account.name}`
       if (account.type === 'alipay' || account.type === 'wechat') return `${account.name}余额`
       return account.name
+    },
+    newLedgerPlaceholder() {
+      return this.ledgerTypes.find(item => item.value === this.newLedgerType)?.placeholder || '请输入账本名称'
     },
     aiRemainingDays() {
       const seconds = Number(this.aiEntitlement?.remaining_seconds || 0)
@@ -828,6 +851,7 @@ export default {
     },
     showCreateModal() {
       this.newLedgerName = ''
+      this.newLedgerType = 'family'
       this.showCreate = true
       this.$nextTick(() => setTimeout(() => this.fixInputs(), 50))
     },
@@ -838,7 +862,10 @@ export default {
       }
       this.createLoading = true
       try {
-        const result = await post('/ledgers', { name: this.newLedgerName.trim() })
+        const result = await post('/ledgers', {
+          name: this.newLedgerName.trim(),
+          type: this.newLedgerType
+        })
         uni.showToast({ title: '创建成功', icon: 'success' })
         this.showCreate = false
         this.currentLedger = result.ledger || {}
@@ -854,6 +881,10 @@ export default {
     showInviteModal(ledger) {
       this.currentLedger = ledger
       this.showInvite = true
+    },
+    ledgerTypeLabel(ledger) {
+      const labels = { personal: '个人', family: '家庭', travel: '旅游', gift: '礼账' }
+      return labels[ledger?.type] || (ledger?.is_personal ? '个人' : '家庭')
     },
     copyInvite() {
       const code = this.currentLedger?.invite_code || ''
@@ -1068,6 +1099,10 @@ export default {
 .ledger-badge.owner {
   background: #fff4e6;
   color: #d98b22;
+}
+.ledger-badge.type {
+  background: #edf5fb;
+  color: #5484a8;
 }
 .ledger-meta {
   font-size: 12px;
@@ -1294,6 +1329,37 @@ export default {
   display: block;
   text-align: center;
 }
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #66776f;
+  font-size: 12px;
+}
+.ledger-type-options {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.ledger-type-option {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #e3ebe7;
+  border-radius: 12px;
+  color: #66776f;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+.ledger-type-option.selected {
+  border-color: #42c39c;
+  background: #effaf6;
+  color: #2b9f7c;
+}
+.ledger-type-icon { font-size: 20px; }
 .modal-actions {
   display: flex;
   gap: 12px;

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"accounter/backend/internal/middleware"
+	"accounter/backend/internal/observability"
 	"accounter/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,7 @@ func NewLedgerHandler() *LedgerHandler {
 // CreateRequest 创建账本请求
 type CreateLedgerRequest struct {
 	Name string `json:"name" binding:"required,min=1,max=64"`
+	Type string `json:"type" binding:"omitempty,oneof=family travel gift"`
 }
 
 // JoinRequest 加入账本请求
@@ -53,11 +55,16 @@ func (h *LedgerHandler) Create(c *gin.Context) {
 		return
 	}
 
-	ledger, inviteCode, err := h.service.Create(userID, req.Name)
+	ledger, inviteCode, err := h.service.Create(userID, req.Name, req.Type)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "ledger_created",
+		"created_ledger_id", ledger.ID,
+		"ledger_type", ledger.Type,
+		"ledger_name", ledger.Name,
+	)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
@@ -82,6 +89,10 @@ func (h *LedgerHandler) Join(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "ledger_joined",
+		"joined_ledger_id", ledger.ID,
+		"ledger_type", ledger.Type,
+	)
 
 	c.JSON(http.StatusOK, gin.H{"data": ledger})
 }
@@ -110,6 +121,7 @@ func (h *LedgerHandler) RemoveMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "ledger_member_removed", "target_user_id", targetUserID)
 
 	c.JSON(http.StatusOK, gin.H{"data": "ok"})
 }
@@ -123,6 +135,7 @@ func (h *LedgerHandler) Leave(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "ledger_left")
 
 	c.JSON(http.StatusOK, gin.H{"data": "ok"})
 }

@@ -34,20 +34,21 @@ TX=$(curl -s -X POST "$BASE/transactions" -H "Authorization: Bearer $TOKEN_A" -H
 echo "$TX"
 TX_ID=$(json_get "$TX" "d['data']['id']")
 
-echo "== create family =="
+echo "== create travel ledger =="
 FAM=$(curl -s -X POST "$BASE/ledgers" -H "Authorization: Bearer $TOKEN_A" -H 'Content-Type: application/json' \
-  -d '{"name":"测试家庭"}')
+  -d '{"name":"测试旅行","type":"travel"}')
 echo "$FAM"
+echo "$FAM" | grep -q '"type":"travel"' || { echo "FAIL: travel ledger type missing"; exit 1; }
 FAM_ID=$(json_get "$FAM" "d['data']['ledger']['id']")
 INVITE=$(json_get "$FAM" "d['data']['invite_code']")
 
-echo "== join family =="
+echo "== join travel ledger =="
 JOIN=$(curl -s -X POST "$BASE/ledgers/join" -H "Authorization: Bearer $TOKEN_B" -H 'Content-Type: application/json' \
   -d "{\"code\":\"$INVITE\"}")
 echo "$JOIN"
 
-echo "== direct create on family (should fail) =="
-# need family account/category ids
+echo "== direct create on travel ledger (should fail) =="
+# need target ledger account/category ids
 FAM_ACC=$(curl -s "$BASE/accounts" -H "Authorization: Bearer $TOKEN_A" -H "X-Ledger-Id: $FAM_ID")
 FAM_ACC_ID=$(json_get "$FAM_ACC" "d['data'][0]['id']")
 FAM_CAT=$(curl -s "$BASE/categories/flat?kind=expense" -H "Authorization: Bearer $TOKEN_A" -H "X-Ledger-Id: $FAM_ID")
@@ -55,7 +56,7 @@ FAM_CAT_ID=$(json_get "$FAM_CAT" "d['data'][0]['id']")
 DIRECT=$(curl -s -X POST "$BASE/transactions" -H "Authorization: Bearer $TOKEN_A" -H "X-Ledger-Id: $FAM_ID" -H 'Content-Type: application/json' \
   -d "{\"account_id\":$FAM_ACC_ID,\"category_id\":$FAM_CAT_ID,\"op_type\":\"expense\",\"amount\":\"10\",\"remark\":\"直记\",\"occurred_at\":\"$DAY 12:00:00\"}")
 echo "$DIRECT"
-echo "$DIRECT" | grep -q '家庭账本不能直接记账' || { echo "FAIL: family direct create not blocked"; exit 1; }
+echo "$DIRECT" | grep -q '该账本不能直接记账' || { echo "FAIL: target ledger direct create not blocked"; exit 1; }
 
 echo "== push =="
 PUSH=$(curl -s -X POST "$BASE/transactions/$TX_ID/push" -H "Authorization: Bearer $TOKEN_A" -H "X-Ledger-Id: $PERSONAL" -H 'Content-Type: application/json' \
@@ -74,6 +75,19 @@ FAM_TX=$(curl -s "$BASE/transactions?page=1&page_size=20" -H "Authorization: Bea
 echo "$FAM_TX"
 TOTAL=$(json_get "$FAM_TX" "d['data']['total']")
 [ "$TOTAL" = "1" ] || { echo "FAIL: expected 1 family tx, got $TOTAL"; exit 1; }
+
+echo "== delete synced copy only =="
+COPY_ID=$(json_get "$FAM_TX" "d['data']['list'][0]['id']")
+COPY_DEL=$(curl -s -X DELETE "$BASE/transactions/$COPY_ID" -H "Authorization: Bearer $TOKEN_A" -H "X-Ledger-Id: $FAM_ID")
+echo "$COPY_DEL"
+SOURCE_AFTER_COPY_DELETE=$(curl -s "$BASE/transactions/$TX_ID" -H "Authorization: Bearer $TOKEN_A" -H "X-Ledger-Id: $PERSONAL")
+echo "$SOURCE_AFTER_COPY_DELETE" | grep -q '"id"' || { echo "FAIL: deleting copy removed source"; exit 1; }
+
+echo "== re-push after copy deletion =="
+PUSH3=$(curl -s -X POST "$BASE/transactions/$TX_ID/push" -H "Authorization: Bearer $TOKEN_A" -H "X-Ledger-Id: $PERSONAL" -H 'Content-Type: application/json' \
+  -d "{\"target_ledger_id\":$FAM_ID}")
+echo "$PUSH3"
+echo "$PUSH3" | grep -q '"source_id"' || { echo "FAIL: re-push after copy deletion failed"; exit 1; }
 
 echo "== delete source =="
 DEL=$(curl -s -X DELETE "$BASE/transactions/$TX_ID" -H "Authorization: Bearer $TOKEN_A" -H "X-Ledger-Id: $PERSONAL")

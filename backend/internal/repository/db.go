@@ -64,6 +64,9 @@ func NewDB(cfg *config.Config) (*gorm.DB, error) {
 			return nil, fmt.Errorf("迁移 MySQL 字符集到 utf8mb4 失败: %w", err)
 		}
 	}
+	if err := migrateLedgerTypes(db); err != nil {
+		return nil, fmt.Errorf("迁移账本类型失败: %w", err)
+	}
 
 	// 运行迁移脚本（老数据迁移到账本体系）
 	if err := migrateToLedgers(db); err != nil {
@@ -76,6 +79,19 @@ func NewDB(cfg *config.Config) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+// migrateLedgerTypes 为旧账本补齐类型：个人账本保持 personal，其余默认为 family。
+func migrateLedgerTypes(db *gorm.DB) error {
+	migrationDB := db.Session(&gorm.Session{SkipHooks: true})
+	if err := migrationDB.Model(&model.Ledger{}).
+		Where("is_personal = ?", true).
+		Update("type", model.LedgerTypePersonal).Error; err != nil {
+		return err
+	}
+	return migrationDB.Model(&model.Ledger{}).
+		Where("is_personal = ? AND (type IS NULL OR type = '' OR type = ?)", false, model.LedgerTypePersonal).
+		Update("type", model.LedgerTypeFamily).Error
 }
 
 // ensureMySQLUTF8MB4 将旧环境中继承 utf8/utf8mb3 默认值的表转换为 utf8mb4。
@@ -185,6 +201,7 @@ func migrateToLedgers(db *gorm.DB) error {
 				Name:       name + "的个人账本",
 				OwnerID:    user.ID,
 				IsPersonal: true,
+				Type:       model.LedgerTypePersonal,
 				InviteCode: model.GenInviteCode(),
 			}
 			if err := db.Create(&ledger).Error; err != nil {
