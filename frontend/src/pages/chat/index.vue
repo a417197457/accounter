@@ -16,11 +16,8 @@
         <text class="entitlement-banner-action" v-if="aiNoticeActionable">{{ aiNotice.action }}</text>
       </view>
       <view class="welcome" v-if="messages.length === 0">
-        <view class="ai-orb">
-          <view class="orb-eye"></view>
-          <view class="orb-eye"></view>
-        </view>
-        <text class="welcome-kicker">AI 记账助手</text>
+        <image class="ai-orb" src="/static/brand/zhangxiaoya-duck-app-icon.png" mode="aspectFill" />
+        <text class="welcome-kicker">账小鸭 AI 记账助手</text>
         <text class="welcome-title">今天花了什么？</text>
         <text class="welcome-copy">可以说一大段话拆多笔；不确定时我会追问，你接着答就行</text>
         <view class="quick-list">
@@ -33,7 +30,7 @@
         <text class="msg-text" v-if="m.role === 'user'">{{ m.text }}</text>
         <view class="msg-ai" v-else>
           <view class="ai-line">
-            <view class="ai-avatar">青</view>
+            <image class="ai-avatar" src="/static/brand/zhangxiaoya-duck-app-icon.png" mode="aspectFill" />
             <text class="msg-text">{{ m.text }}</text>
           </view>
           <view class="warn-banner" v-if="m.warnings && m.warnings.length">
@@ -757,18 +754,9 @@ export default {
   width: 70px;
   height: 70px;
   border-radius: 28px;
-  background: #43c59e;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
+  display: block;
+  background: #f7f9f7;
   box-shadow: 0 16px 34px rgba(67, 197, 158, 0.25);
-}
-.orb-eye {
-  width: 7px;
-  height: 13px;
-  border-radius: 8px;
-  background: #fff;
 }
 .welcome-kicker {
   margin-top: 20px;
@@ -844,14 +832,9 @@ export default {
   width: 28px;
   height: 28px;
   flex: 0 0 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  background: #43c59e;
+  display: block;
+  background: #f7f9f7;
   border-radius: 10px;
-  font-size: 11px;
-  font-weight: 700;
 }
 .msg.ai .msg-text {
   display: block;

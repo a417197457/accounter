@@ -1,11 +1,12 @@
 <template>
   <view class="page">
     <view class="login-shell">
-      <view class="brand-mark">
-        <view class="brand-eye"></view>
-        <view class="brand-eye"></view>
-      </view>
-      <text class="brand-name">轻账</text>
+      <image
+        class="brand-mark"
+        src="/static/brand/zhangxiaoya-duck-app-icon.png"
+        mode="aspectFill"
+      />
+      <text class="brand-name">账小鸭</text>
       <text class="brand-copy">每一笔，都清清楚楚</text>
 
       <view class="card login-card">
@@ -233,18 +234,9 @@ export default {
   width: 64px;
   height: 64px;
   border-radius: 24px;
-  background: #43c59e;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
+  display: block;
+  background: #f7f9f7;
   box-shadow: 0 14px 30px rgba(67, 197, 158, 0.25);
-}
-.brand-eye {
-  width: 7px;
-  height: 12px;
-  border-radius: 8px;
-  background: #fff;
 }
 .brand-name {
   margin-top: 16px;

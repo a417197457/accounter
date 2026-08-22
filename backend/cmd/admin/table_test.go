@@ -9,7 +9,7 @@ import (
 func TestTerminalCellWidth(t *testing.T) {
 	tests := map[string]int{
 		"abc": 3,
-		"轻账":  4,
+		"账小鸭": 6,
 		"🍱":   2,
 	}
 	for value, expected := range tests {

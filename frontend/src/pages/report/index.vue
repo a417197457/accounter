@@ -739,7 +739,7 @@ export default {
         const blob = await res.blob()
         const a = document.createElement('a')
         a.href = URL.createObjectURL(blob)
-        a.download = `accounter_${this.currentMonth}.xlsx`
+        a.download = `zhangxiaoya_${this.currentMonth}.xlsx`
         a.click()
         URL.revokeObjectURL(a.href)
       } catch (err) {

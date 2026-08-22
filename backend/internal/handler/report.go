@@ -88,9 +88,9 @@ func (h *ReportHandler) Export(c *gin.Context) {
 		return
 	}
 
-	filename := "accounter.xlsx"
+	filename := "zhangxiaoya.xlsx"
 	if monthStr != "" {
-		filename = fmt.Sprintf("accounter_%s.xlsx", monthStr)
+		filename = fmt.Sprintf("zhangxiaoya_%s.xlsx", monthStr)
 	}
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))

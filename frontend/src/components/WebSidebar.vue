@@ -2,10 +2,10 @@
   <!-- #ifdef H5 -->
   <view class="web-sidebar">
     <view class="sidebar-brand">
-      <view class="brand-mark"><text></text><text></text></view>
+      <image class="brand-mark" src="/static/brand/zhangxiaoya-duck-app-icon.png" mode="aspectFill" />
       <view>
-        <text class="brand-name">轻账</text>
-        <text class="brand-copy">清爽记账，心中有数</text>
+        <text class="brand-name">账小鸭</text>
+        <text class="brand-copy">小鸭记账，心中有数</text>
       </view>
     </view>
 
@@ -81,10 +81,8 @@ export default {
   .sidebar-brand { display: flex; align-items: center; gap: 11px; padding: 0 8px 28px; }
   .brand-mark {
     width: 42px; height: 42px; flex: 0 0 42px; border-radius: 15px;
-    display: flex; align-items: center; justify-content: center; gap: 6px;
-    background: #42c39c; box-shadow: 0 8px 18px rgba(66,195,156,.2);
+    display: block; background: #f7f9f7; box-shadow: 0 8px 18px rgba(66,195,156,.2);
   }
-  .brand-mark text { width: 5px; height: 12px; border-radius: 999px; background: #fff; }
   .brand-name { display: block; color: #18312b; font-size: 18px; font-weight: 750; }
   .brand-copy { display: block; margin-top: 2px; color: #92a19b; font-size: 10px; }
   .sidebar-nav { display: flex; flex-direction: column; gap: 7px; }

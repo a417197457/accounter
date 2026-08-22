@@ -85,7 +85,7 @@ func loadEnvironmentFile() {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `轻账运维管理：
+	fmt.Fprintln(os.Stderr, `账小鸭运维管理：
   accounter-admin ops users --page 1 --page-size 50
   accounter-admin ops bills --user-id 12 --month 2026-08 --page 1 --page-size 50
   accounter-admin ops bills --user-id 12 --show-remark
