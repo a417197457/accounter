@@ -7,8 +7,8 @@ import (
 
 	"accounter/backend/internal/middleware"
 	"accounter/backend/internal/model"
-	"accounter/backend/internal/repository"
 	"accounter/backend/internal/report"
+	"accounter/backend/internal/repository"
 
 	"github.com/gin-gonic/gin"
 )
@@ -42,7 +42,7 @@ func (h *ReportHandler) Monthly(c *gin.Context) {
 	var txs []model.Transaction
 	err = repository.GetDB().
 		Where("ledger_id = ? AND occurred_at >= ? AND occurred_at < ? AND deleted_at IS NULL", ledgerID, start, end).
-		Preload("Account").Preload("Category").Preload("Member").
+		Preload("Account").Preload("PaymentAccount").Preload("ToAccount").Preload("Category").Preload("Category.Parent").Preload("Member").
 		Order("occurred_at desc, id desc").
 		Find(&txs).Error
 	if err != nil {
@@ -75,7 +75,7 @@ func (h *ReportHandler) Export(c *gin.Context) {
 	}
 
 	var txs []model.Transaction
-	if err := query.Preload("Account").Preload("Category").Preload("Member").
+	if err := query.Preload("Account").Preload("PaymentAccount").Preload("ToAccount").Preload("Category").Preload("Category.Parent").Preload("Member").
 		Order("occurred_at desc, id desc").
 		Find(&txs).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

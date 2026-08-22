@@ -1,0 +1,44 @@
+server:
+  port: 8080
+  # H5 与 API 分域时填写网页 Origin；同域部署可留空。
+  allowed_origins: []
+
+db:
+  driver: sqlite   # sqlite | mysql
+  # mysql 时可用完整 dsn，或拆字段：
+  # dsn: "user:pass@tcp(127.0.0.1:3306)/accounter?charset=utf8mb4&parseTime=True&loc=Local"
+  host: 127.0.0.1
+  port: 3306
+  user: accounter
+  password: ""
+  name: accounter
+
+sqlite:
+  path: ./dev.db
+
+jwt:
+  secret: "dev-secret"
+  expire: 168h
+
+wechat:
+  # 小程序 AppID 可写配置；AppSecret 生产环境必须使用 WECHAT_APP_SECRET 环境变量。
+  app_id: ""
+  app_secret: ""
+  api_base: "https://api.weixin.qq.com"
+
+ai:
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key: "YOUR_BAILIAN_API_KEY"
+  model: "qwen-max"
+  # 本地 SQLite 调试可使用开发值；MySQL 生产环境必须通过环境变量注入独立随机密钥。
+  activation_secret: "dev-activation-secret"
+  trial_days: 7
+  trial_daily_limit: 50
+  activated_daily_limit: 500
+  activation_attempt_limit: 5
+  activation_ip_attempt_limit: 30
+  asr:
+    # 留空则回落对话配置
+    base_url: ""
+    api_key: ""
+    model: "qwen3-asr-flash"

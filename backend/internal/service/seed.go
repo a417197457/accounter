@@ -11,16 +11,16 @@ import (
 
 // SeedDefaultData 播种默认账户和分类
 func SeedDefaultData(db *gorm.DB, ledgerID, userID uint) error {
-	// 默认账户（按顺序，第一个为默认）
 	defaultAccounts := []struct {
 		Name string
 		Type string
 		Sort int
 	}{
 		{"支付宝", "alipay", 1},
-		{"银行卡", "bank", 2},
-		{"微信钱包", "wechat", 3},
-		{"现金", "cash", 4},
+		{"微信", "wechat", 2},
+		{"现金", "cash", 3},
+		{"储蓄卡", "savings", 4},
+		{"信用卡", "credit", 5},
 	}
 
 	for _, acc := range defaultAccounts {
@@ -37,26 +37,45 @@ func SeedDefaultData(db *gorm.DB, ledgerID, userID uint) error {
 		}
 	}
 
-	// 默认支出分类（一级 + 二级）
 	expenseCategories := []struct {
 		Name     string
 		Icon     string
-		Children []string
+		Children []struct {
+			Name string
+			Icon string
+		}
 	}{
-		{"餐饮", "🍽️", []string{"早餐", "午餐", "晚餐", "零食饮料"}},
-		{"交通", "🚗", []string{"公交地铁", "打车", "加油", "停车"}},
-		{"购物", "🛒", []string{"日用品", "服装", "电子产品", "其他"}},
-		{"居住", "🏠", []string{"房租", "水电燃气", "物业费", "维修"}},
-		{"娱乐", "🎮", []string{"电影", "游戏", "旅游", "运动"}},
-		{"医疗", "💊", []string{"门诊", "药品", "体检"}},
-		{"教育", "📚", []string{"书籍", "课程", "培训"}},
-		{"通讯", "📱", []string{"话费", "网费"}},
-		{"人情", "🎁", []string{"礼金", "请客", "红包"}},
-		{"其他", "❓", []string{}},
+		{"餐饮", "🍽️", []struct{ Name, Icon string }{
+			{"早餐", "🥐"}, {"午餐", "🍱"}, {"晚餐", "🍜"}, {"零食饮料", "🥤"},
+		}},
+		{"交通", "🚗", []struct{ Name, Icon string }{
+			{"公交地铁", "🚇"}, {"打车", "🚕"}, {"加油", "⛽"}, {"停车", "🅿️"},
+		}},
+		{"购物", "🛒", []struct{ Name, Icon string }{
+			{"日用品", "🧴"}, {"服装", "👕"}, {"电子产品", "💻"}, {"其他购物", "🛍️"},
+		}},
+		{"居住", "🏠", []struct{ Name, Icon string }{
+			{"房租", "🔑"}, {"水电燃气", "💡"}, {"物业费", "🏢"}, {"维修", "🔧"},
+		}},
+		{"娱乐", "🎮", []struct{ Name, Icon string }{
+			{"电影", "🎬"}, {"游戏", "🕹️"}, {"旅游", "✈️"}, {"运动", "⚽"},
+		}},
+		{"医疗", "💊", []struct{ Name, Icon string }{
+			{"门诊", "🏥"}, {"药品", "💉"}, {"体检", "🩺"},
+		}},
+		{"教育", "📚", []struct{ Name, Icon string }{
+			{"书籍", "📖"}, {"课程", "🎓"}, {"培训", "✏️"},
+		}},
+		{"通讯", "📱", []struct{ Name, Icon string }{
+			{"话费", "📞"}, {"网费", "📶"},
+		}},
+		{"人情", "🎁", []struct{ Name, Icon string }{
+			{"礼金", "🧧"}, {"请客", "🥂"}, {"红包", "💌"},
+		}},
+		{"其他", "📦", nil},
 	}
 
 	for sortIdx, cat := range expenseCategories {
-		// 创建一级分类
 		parent := model.Category{
 			LedgerID: ledgerID,
 			UserID:   userID,
@@ -69,23 +88,22 @@ func SeedDefaultData(db *gorm.DB, ledgerID, userID uint) error {
 			return fmt.Errorf("创建分类 %s 失败: %w", cat.Name, err)
 		}
 
-		// 创建二级分类
-		for childIdx, childName := range cat.Children {
-			child := model.Category{
+		for childIdx, child := range cat.Children {
+			c := model.Category{
 				LedgerID: ledgerID,
 				UserID:   userID,
-				Name:     childName,
+				Name:     child.Name,
 				ParentID: &parent.ID,
 				Kind:     "expense",
+				Icon:     child.Icon,
 				Sort:     childIdx + 1,
 			}
-			if err := db.Create(&child).Error; err != nil {
-				return fmt.Errorf("创建子分类 %s 失败: %w", childName, err)
+			if err := db.Create(&c).Error; err != nil {
+				return fmt.Errorf("创建子分类 %s 失败: %w", child.Name, err)
 			}
 		}
 	}
 
-	// 默认收入分类（一级）
 	incomeCategories := []struct {
 		Name string
 		Icon string
@@ -95,7 +113,7 @@ func SeedDefaultData(db *gorm.DB, ledgerID, userID uint) error {
 		{"理财", "📈"},
 		{"兼职", "💼"},
 		{"红包", "🧧"},
-		{"其他", "❓"},
+		{"其他", "📦"},
 	}
 
 	for sortIdx, cat := range incomeCategories {

@@ -35,49 +35,67 @@
       "style": {
         "navigationBarTitleText": "登录"
       }
+    },
+    {
+      "path": "pages/account/index",
+      "style": {
+        "navigationBarTitleText": "账户管理"
+      }
+    },
+    {
+      "path": "pages/account-detail/index",
+      "style": {
+        "navigationBarTitleText": "账户明细"
+      }
+    },
+    {
+      "path": "pages/category/index",
+      "style": {
+        "navigationBarTitleText": "分类管理"
+      }
     }
   ],
   "globalStyle": {
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "AI 记账",
-    "navigationBarBackgroundColor": "#ffffff",
-    "backgroundColor": "#f5f5f5"
+    "navigationBarBackgroundColor": "#F7F9F7",
+    "backgroundColor": "#F7F9F7"
   },
   "tabBar": {
-    "color": "#999999",
-    "selectedColor": "#007aff",
-    "borderStyle": "black",
+    "color": "#88958F",
+    "selectedColor": "#36B88F",
+    "borderStyle": "white",
     "backgroundColor": "#ffffff",
     "list": [
       {
         "pagePath": "pages/chat/index",
         "text": "AI 记账",
-        "iconPath": "static/tab/chat.png",
-        "selectedIconPath": "static/tab/chat-active.png"
+        "iconPath": "static/tab/chat-v2.png",
+        "selectedIconPath": "static/tab/chat-active-v2.png"
       },
       {
         "pagePath": "pages/record/index",
         "text": "记一笔",
-        "iconPath": "static/tab/record.png",
-        "selectedIconPath": "static/tab/record-active.png"
+        "iconPath": "static/tab/record-v2.png",
+        "selectedIconPath": "static/tab/record-active-v2.png"
       },
       {
         "pagePath": "pages/list/index",
         "text": "明细",
-        "iconPath": "static/tab/list.png",
-        "selectedIconPath": "static/tab/list-active.png"
+        "iconPath": "static/tab/list-v2.png",
+        "selectedIconPath": "static/tab/list-active-v2.png"
       },
       {
         "pagePath": "pages/report/index",
         "text": "报表",
-        "iconPath": "static/tab/report.png",
-        "selectedIconPath": "static/tab/report-active.png"
+        "iconPath": "static/tab/report-v2.png",
+        "selectedIconPath": "static/tab/report-active-v2.png"
       },
       {
         "pagePath": "pages/profile/index",
         "text": "我的",
-        "iconPath": "static/tab/profile.png",
-        "selectedIconPath": "static/tab/profile-active.png"
+        "iconPath": "static/tab/profile-v2.png",
+        "selectedIconPath": "static/tab/profile-active-v2.png"
       }
     ]
   }

@@ -25,16 +25,23 @@ func NewAccountHandler() *AccountHandler {
 
 // CreateRequest 创建账户请求
 type CreateAccountRequest struct {
-	Name string `json:"name" binding:"required,min=1,max=64"`
-	Type string `json:"type" binding:"max=32"`
-	Sort int    `json:"sort"`
+	Name             string `json:"name" binding:"required,min=1,max=64"`
+	Type             string `json:"type" binding:"required,max=32"`
+	Sort             int    `json:"sort"`
+	StatementDay     *int   `json:"statement_day"`
+	DueDay           *int   `json:"due_day"`
+	LinkedAccountIDs []uint `json:"linked_account_ids"`
 }
 
 // UpdateRequest 更新账户请求
 type UpdateAccountRequest struct {
-	Name       string `json:"name" binding:"required,min=1,max=64"`
-	Sort       int    `json:"sort"`
-	IsArchived bool   `json:"is_archived"`
+	Name             string `json:"name" binding:"required,min=1,max=64"`
+	Type             string `json:"type" binding:"max=32"`
+	Sort             int    `json:"sort"`
+	IsArchived       bool   `json:"is_archived"`
+	StatementDay     *int   `json:"statement_day"`
+	DueDay           *int   `json:"due_day"`
+	LinkedAccountIDs []uint `json:"linked_account_ids"`
 }
 
 // Create 创建账户
@@ -49,13 +56,15 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	}
 
 	acc := &model.Account{
-		Name:    req.Name,
-		Type:    req.Type,
-		Sort:    req.Sort,
-		Balance: decimal.Zero,
+		Name:         req.Name,
+		Type:         req.Type,
+		Sort:         req.Sort,
+		Balance:      decimal.Zero,
+		StatementDay: req.StatementDay,
+		DueDay:       req.DueDay,
 	}
 
-	acc, err := h.service.Create(ledgerID, userID, acc)
+	acc, err := h.service.Create(ledgerID, userID, acc, req.LinkedAccountIDs)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -77,12 +86,15 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	}
 
 	next := &model.Account{
-		Name:       req.Name,
-		Sort:       req.Sort,
-		IsArchived: req.IsArchived,
+		Name:         req.Name,
+		Type:         req.Type,
+		Sort:         req.Sort,
+		IsArchived:   req.IsArchived,
+		StatementDay: req.StatementDay,
+		DueDay:       req.DueDay,
 	}
 
-	acc, err := h.service.Update(ledgerID, userID, id, next)
+	acc, err := h.service.Update(ledgerID, userID, id, next, req.LinkedAccountIDs)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

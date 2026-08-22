@@ -30,15 +30,18 @@ export function request(url, method = 'GET', data = {}, options = {}) {
       success: (res) => {
         if (res.statusCode === 401) {
           // 检查是否是登录/注册接口
-          const isAuthUrl = url.startsWith('/auth/login') || url.startsWith('/auth/register')
+          const isAuthUrl = url.startsWith('/auth/login') || url.startsWith('/auth/register') || url.startsWith('/auth/wechat')
 
           if (isAuthUrl) {
             // 登录/注册接口的 401，显示后端返回的错误信息
-            const errMsg = res.data?.error || '用户名或密码错误'
+            const errMsg = res.data?.error || '登录失败，请重试'
             if (!options.silent) {
               uni.showToast({ title: errMsg, icon: 'none' })
             }
-            reject(new Error(errMsg))
+            const error = new Error(errMsg)
+            error.code = res.data?.code || ''
+            error.statusCode = res.statusCode
+            reject(error)
             return
           }
 
@@ -52,7 +55,10 @@ export function request(url, method = 'GET', data = {}, options = {}) {
               uni.showToast({ title: '未登录或登录已过期', icon: 'none' })
             }
           }
-          reject(new Error('未登录或登录已过期'))
+          const error = new Error('未登录或登录已过期')
+          error.code = res.data?.code || 'UNAUTHORIZED'
+          error.statusCode = res.statusCode
+          reject(error)
           return
         }
         if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -63,7 +69,10 @@ export function request(url, method = 'GET', data = {}, options = {}) {
           if (!options.silent) {
             uni.showToast({ title: errMsg, icon: 'none' })
           }
-          reject(new Error(errMsg))
+          const error = new Error(errMsg)
+          error.code = res.data?.code || ''
+          error.statusCode = res.statusCode
+          reject(error)
         }
       },
       fail: (err) => {

@@ -28,24 +28,26 @@ func NewTransactionHandler() *TransactionHandler {
 
 // CreateRequest 创建流水请求
 type CreateTransactionRequest struct {
-	AccountID   uint            `json:"account_id" binding:"required"`
-	ToAccountID *uint           `json:"to_account_id,omitempty"`
-	CategoryID  *uint           `json:"category_id,omitempty"`
-	OpType      string          `json:"op_type" binding:"required,oneof=expense income borrow_in borrow_out transfer"`
-	Amount      decimal.Decimal `json:"amount" binding:"required"`
-	Remark      string          `json:"remark" binding:"max=255"`
-	OccurredAt  string          `json:"occurred_at" binding:"required"`
+	AccountID        uint            `json:"account_id" binding:"required"`
+	PaymentAccountID *uint           `json:"payment_account_id,omitempty"`
+	ToAccountID      *uint           `json:"to_account_id,omitempty"`
+	CategoryID       *uint           `json:"category_id,omitempty"`
+	OpType           string          `json:"op_type" binding:"required,oneof=expense income borrow_in borrow_out transfer"`
+	Amount           decimal.Decimal `json:"amount" binding:"required"`
+	Remark           string          `json:"remark" binding:"max=255"`
+	OccurredAt       string          `json:"occurred_at" binding:"required"`
 }
 
 // UpdateRequest 更新流水请求
 type UpdateTransactionRequest struct {
-	AccountID   uint            `json:"account_id" binding:"required"`
-	ToAccountID *uint           `json:"to_account_id,omitempty"`
-	CategoryID  *uint           `json:"category_id,omitempty"`
-	OpType      string          `json:"op_type" binding:"required,oneof=expense income borrow_in borrow_out transfer"`
-	Amount      decimal.Decimal `json:"amount" binding:"required"`
-	Remark      string          `json:"remark" binding:"max=255"`
-	OccurredAt  string          `json:"occurred_at" binding:"required"`
+	AccountID        uint            `json:"account_id" binding:"required"`
+	PaymentAccountID *uint           `json:"payment_account_id,omitempty"`
+	ToAccountID      *uint           `json:"to_account_id,omitempty"`
+	CategoryID       *uint           `json:"category_id,omitempty"`
+	OpType           string          `json:"op_type" binding:"required,oneof=expense income borrow_in borrow_out transfer"`
+	Amount           decimal.Decimal `json:"amount" binding:"required"`
+	Remark           string          `json:"remark" binding:"max=255"`
+	OccurredAt       string          `json:"occurred_at" binding:"required"`
 }
 
 // parseTime 解析时间字符串
@@ -87,13 +89,14 @@ func (h *TransactionHandler) Create(c *gin.Context) {
 	}
 
 	t := &model.Transaction{
-		AccountID:   req.AccountID,
-		ToAccountID: req.ToAccountID,
-		CategoryID:  req.CategoryID,
-		OpType:      req.OpType,
-		Amount:      req.Amount,
-		Remark:      req.Remark,
-		OccurredAt:  occurredAt,
+		AccountID:        req.AccountID,
+		PaymentAccountID: req.PaymentAccountID,
+		ToAccountID:      req.ToAccountID,
+		CategoryID:       req.CategoryID,
+		OpType:           req.OpType,
+		Amount:           req.Amount,
+		Remark:           req.Remark,
+		OccurredAt:       occurredAt,
 	}
 
 	t, err = h.service.Create(ledgerID, userID, t)
@@ -129,13 +132,14 @@ func (h *TransactionHandler) Update(c *gin.Context) {
 	}
 
 	next := &model.Transaction{
-		AccountID:   req.AccountID,
-		ToAccountID: req.ToAccountID,
-		CategoryID:  req.CategoryID,
-		OpType:      req.OpType,
-		Amount:      req.Amount,
-		Remark:      req.Remark,
-		OccurredAt:  occurredAt,
+		AccountID:        req.AccountID,
+		PaymentAccountID: req.PaymentAccountID,
+		ToAccountID:      req.ToAccountID,
+		CategoryID:       req.CategoryID,
+		OpType:           req.OpType,
+		Amount:           req.Amount,
+		Remark:           req.Remark,
+		OccurredAt:       occurredAt,
 	}
 
 	t, err := h.service.Update(ledgerID, userID, id, next)
@@ -193,6 +197,10 @@ func (h *TransactionHandler) List(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "end 格式错误"})
 			return
 		}
+		// 纯日期补到当天结束，避免漏掉 end 当天流水
+		if len(s) == 10 {
+			t = t.Add(24*time.Hour - time.Second)
+		}
 		req.End = &t
 	}
 
@@ -233,12 +241,23 @@ func (h *TransactionHandler) List(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"list":     transactions,
-			"total":    total,
-			"page":     req.Page,
+			"list":      transactions,
+			"total":     total,
+			"page":      req.Page,
 			"page_size": req.PageSize,
 		},
 	})
+}
+
+// ListMonths 获取按月折叠摘要，月份内容由 GET /transactions 按需加载。
+func (h *TransactionHandler) ListMonths(c *gin.Context) {
+	ledgerID := middleware.LedgerID(c)
+	months, err := h.service.ListMonths(ledgerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": months})
 }
 
 // Get 获取单条流水
@@ -253,4 +272,54 @@ func (h *TransactionHandler) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": t})
+}
+
+// PushRequest 单笔推送请求
+type PushRequest struct {
+	TargetLedgerID uint `json:"target_ledger_id" binding:"required"`
+}
+
+// Push 单笔推送到家庭账本
+func (h *TransactionHandler) Push(c *gin.Context) {
+	srcLedgerID := middleware.LedgerID(c)
+	userID := middleware.UserID(c)
+	id := getUintParam(c, "id")
+
+	var req PushRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	t, err := h.service.PushToLedger(srcLedgerID, id, req.TargetLedgerID, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": t})
+}
+
+// PushMonthRequest 整月推送请求
+type PushMonthRequest struct {
+	Month          string `json:"month" binding:"required"`
+	TargetLedgerID uint   `json:"target_ledger_id" binding:"required"`
+}
+
+// PushMonth 整月推送到家庭账本
+func (h *TransactionHandler) PushMonth(c *gin.Context) {
+	srcLedgerID := middleware.LedgerID(c)
+	userID := middleware.UserID(c)
+
+	var req PushMonthRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	result, err := h.service.PushMonth(srcLedgerID, req.Month, req.TargetLedgerID, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }

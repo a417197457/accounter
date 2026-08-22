@@ -1,0 +1,23 @@
+[Unit]
+Description=Accounter API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=accounter
+Group=accounter
+WorkingDirectory=/opt/accounter
+EnvironmentFile=/etc/accounter/env
+ExecStart=/opt/accounter/bin/accounter
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/accounter
+
+[Install]
+WantedBy=multi-user.target

@@ -34,6 +34,15 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+type WechatLoginRequest struct {
+	Code string `json:"code" binding:"required"`
+}
+
+type WechatPhoneLoginRequest struct {
+	Code      string `json:"code" binding:"required"`
+	PhoneCode string `json:"phone_code" binding:"required"`
+}
+
 // Register 注册
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
@@ -76,6 +85,36 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			"user":  user,
 		},
 	})
+}
+
+// WechatLogin 微信小程序 openid 登录，不要求绑定手机号。
+func (h *AuthHandler) WechatLogin(c *gin.Context) {
+	var req WechatLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少微信登录凭证"})
+		return
+	}
+	user, token, err := h.service.WechatLogin(c.Request.Context(), req.Code)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"token": token, "user": user}})
+}
+
+// WechatPhoneLogin 微信小程序授权手机号登录。
+func (h *AuthHandler) WechatPhoneLogin(c *gin.Context) {
+	var req WechatPhoneLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少微信登录凭证或手机号授权凭证"})
+		return
+	}
+	user, token, err := h.service.WechatPhoneLogin(c.Request.Context(), req.Code, req.PhoneCode)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"token": token, "user": user}})
 }
 
 // GetCurrentUser 获取当前用户信息

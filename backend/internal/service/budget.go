@@ -22,19 +22,31 @@ func NewBudgetService() *BudgetService {
 	return &BudgetService{db: repository.GetDB()}
 }
 
-// Set 设置预算（upsert，categoryID nil=总预算）
+// Set 设置预算（按账本 + 分类 upsert，categoryID nil=总预算）
 func (s *BudgetService) Set(ledgerID, userID uint, categoryID *uint, amount decimal.Decimal) error {
 	if amount.LessThanOrEqual(decimal.Zero) {
 		return errors.New("预算金额必须大于 0")
 	}
+	if categoryID != nil {
+		var cat model.Category
+		if err := s.db.First(&cat, "id = ? AND ledger_id = ?", *categoryID, ledgerID).Error; err != nil {
+			return errors.New("分类不存在或不属于该账本")
+		}
+		if cat.ParentID != nil {
+			return errors.New("预算请设置在一级分类上")
+		}
+	}
 
-	// 查找是否已存在
+	q := s.db.Where("ledger_id = ?", ledgerID)
+	if categoryID == nil {
+		q = q.Where("category_id IS NULL")
+	} else {
+		q = q.Where("category_id = ?", *categoryID)
+	}
+
 	var budget model.Budget
-	err := s.db.Where("ledger_id = ? AND user_id = ? AND (category_id = ? OR (category_id IS NULL AND ? IS NULL))",
-		ledgerID, userID, categoryID, categoryID).First(&budget).Error
-
+	err := q.First(&budget).Error
 	if err == gorm.ErrRecordNotFound {
-		// 新建
 		budget = model.Budget{
 			LedgerID:   ledgerID,
 			UserID:     userID,
@@ -47,29 +59,26 @@ func (s *BudgetService) Set(ledgerID, userID uint, categoryID *uint, amount deci
 		return fmt.Errorf("查询预算失败: %w", err)
 	}
 
-	// 更新
 	budget.Amount = amount
 	return s.db.Save(&budget).Error
 }
 
-// BudgetWithSpent 预算 + 本月已用
+// BudgetWithSpent 预算 + 所选月份已用
 type BudgetWithSpent struct {
 	model.Budget
 	CategoryName string          `json:"category_name,omitempty"`
 	Spent        decimal.Decimal `json:"spent"`
 }
 
-// ListBudgets 列出该账本的所有预算（附本月已用）
-func (s *BudgetService) ListBudgets(ledgerID uint) ([]BudgetWithSpent, error) {
+// ListBudgets 列出该账本的所有预算（附 month 所在月份已用）
+func (s *BudgetService) ListBudgets(ledgerID uint, month time.Time) ([]BudgetWithSpent, error) {
 	var budgets []model.Budget
 	err := s.db.Where("ledger_id = ?", ledgerID).Find(&budgets).Error
 	if err != nil {
 		return nil, fmt.Errorf("查询预算列表失败: %w", err)
 	}
 
-	// 本月范围
-	now := time.Now()
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, month.Location())
 	nextMonth := monthStart.AddDate(0, 1, 0)
 
 	result := []BudgetWithSpent{}

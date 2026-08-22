@@ -38,10 +38,12 @@ func parseTimeParam(c *gin.Context, key string) *time.Time {
 	return &t
 }
 
-// Overview 账本总览
+// Overview 账本总览（支持 start/end 限定月份）
 func (h *StatsHandler) Overview(c *gin.Context) {
 	ledgerID := middleware.LedgerID(c)
-	data, err := h.service.Overview(ledgerID)
+	start := parseTimeParam(c, "start")
+	end := parseTimeParam(c, "end")
+	data, err := h.service.Overview(ledgerID, start, end)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

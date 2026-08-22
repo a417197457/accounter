@@ -42,7 +42,12 @@
   },
   "quickapp": {},
   "mp-weixin": {
-    "appid": "",
+    "appid": "wx6339d0862921ce0e",
+    "permission": {
+      "scope.record": {
+        "desc": "用于语音记账，将语音识别为账单内容"
+      }
+    },
     "setting": {
       "urlCheck": false,
       "es6": true,

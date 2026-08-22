@@ -1,6 +1,10 @@
 # Go
 backend/dev.db
 backend/dev-server.log
+backend/e2e-test.db
+backend/e2e-server.log
+backend/e2e.pid
+backend/accounter-bin
 *.exe
 *.exe~
 *.dll

@@ -17,6 +17,9 @@ import (
 func main() {
 	// 加载配置
 	cfg := config.Load()
+	if err := cfg.ValidateProduction(); err != nil {
+		log.Fatalf("生产配置校验失败: %v", err)
+	}
 
 	// 初始化数据库
 	if _, err := repository.NewDB(cfg); err != nil {
@@ -32,15 +35,25 @@ func main() {
 
 	// 创建 Gin 引擎
 	r := gin.Default()
+	// 仅信任同机 Nginx，避免公网请求伪造 X-Forwarded-For，同时让激活限流取得真实来源 IP。
+	if err := r.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
+		log.Fatalf("代理配置失败: %v", err)
+	}
 
 	// CORS 中间件
-	r.Use(middleware.CORS())
+	r.Use(middleware.CORS(cfg.Server.AllowedOrigins, cfg.IsDev()))
 
 	// 健康检查端点
 	r.GET("/health", func(c *gin.Context) {
+		sqlDB, err := repository.GetDB().DB()
+		if err != nil || sqlDB.PingContext(c.Request.Context()) != nil {
+			c.JSON(503, gin.H{"status": "error", "database": false})
+			return
+		}
 		c.JSON(200, gin.H{
-			"status": "ok",
-			"ai":     cfg.AI.APIKey != "" && cfg.AI.APIKey != "YOUR_BAILIAN_API_KEY",
+			"status":   "ok",
+			"database": true,
+			"ai":       cfg.AI.APIKey != "" && cfg.AI.APIKey != "YOUR_BAILIAN_API_KEY",
 		})
 	})
 
@@ -53,6 +66,7 @@ func main() {
 	statsHandler := handler.NewStatsHandler()
 	budgetHandler := handler.NewBudgetHandler()
 	reportHandler := handler.NewReportHandler()
+	bookkeepingPreferenceHandler := handler.NewBookkeepingPreferenceHandler()
 	aiService := ai.NewService()
 	aiHandler := handler.NewAIHandler(aiService)
 
@@ -61,6 +75,8 @@ func main() {
 	{
 		auth.POST("/register", authHandler.Register)
 		auth.POST("/login", authHandler.Login)
+		auth.POST("/wechat", authHandler.WechatLogin)
+		auth.POST("/wechat-phone", authHandler.WechatPhoneLogin)
 	}
 
 	// 需要登录的路由
@@ -80,6 +96,10 @@ func main() {
 			ledgers.DELETE("/:id/members/:uid", ledgerHandler.RemoveMember)
 			ledgers.POST("/:id/leave", ledgerHandler.Leave)
 		}
+
+		// AI 权益属于用户，不依赖当前账本。
+		api.GET("/ai/entitlement", aiHandler.Entitlement)
+		api.POST("/ai/activate", aiHandler.Activate)
 
 		// 需要账本上下文的路由
 		business := api.Group("")
@@ -104,6 +124,11 @@ func main() {
 				categories.DELETE("/:id", categoryHandler.Delete)
 			}
 
+			// 整月推送（独立路径，避免与 /transactions/:id 冲突）
+			business.POST("/push-month", transactionHandler.PushMonth)
+			// 月份摘要同样使用独立路径，避免静态 /months 与 /:id 冲突。
+			business.GET("/transaction-months", transactionHandler.ListMonths)
+
 			// 流水
 			transactions := business.Group("/transactions")
 			{
@@ -112,6 +137,7 @@ func main() {
 				transactions.POST("", transactionHandler.Create)
 				transactions.PUT("/:id", transactionHandler.Update)
 				transactions.DELETE("/:id", transactionHandler.Delete)
+				transactions.POST("/:id/push", transactionHandler.Push)
 			}
 
 			// 统计
@@ -142,6 +168,8 @@ func main() {
 			// AI
 			aiGroup := business.Group("/ai")
 			{
+				aiGroup.GET("/account-preference", bookkeepingPreferenceHandler.Get)
+				aiGroup.PUT("/account-preference", bookkeepingPreferenceHandler.Update)
 				aiGroup.POST("/chat", aiHandler.Chat)
 				aiGroup.POST("/transcribe", aiHandler.Transcribe)
 				aiGroup.POST("/confirm", aiHandler.Confirm)

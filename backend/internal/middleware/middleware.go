@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -97,7 +98,13 @@ func RequireLedger() gin.HandlerFunc {
 
 		if ledgerIDStr == "" {
 			// 为空则用该用户的个人账本；没有则兜底自动创建（个人账本默认就有，不应报错）
-			ledgerID = getOrCreatePersonalLedger(db, uid)
+			var err error
+			ledgerID, err = getOrCreatePersonalLedger(db, uid)
+			if err != nil || ledgerID == 0 {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "个人账本初始化失败"})
+				c.Abort()
+				return
+			}
 		} else {
 			// 非空则校验是否为该账本成员
 			var lid uint
@@ -122,14 +129,33 @@ func RequireLedger() gin.HandlerFunc {
 	}
 }
 
-// CORS 跨域中间件
-func CORS() gin.HandlerFunc {
+// CORS 跨域中间件。生产环境只允许配置的网页来源；小程序请求通常不带 Origin。
+func CORS(allowedOrigins []string, allowLocalDevelopment bool) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(allowedOrigins)+2)
+	for _, origin := range allowedOrigins {
+		allowed[strings.TrimRight(origin, "/")] = struct{}{}
+	}
+	if allowLocalDevelopment {
+		allowed["http://localhost:5173"] = struct{}{}
+		allowed["http://127.0.0.1:5173"] = struct{}{}
+	}
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := strings.TrimRight(c.GetHeader("Origin"), "/")
+		if origin != "" {
+			if _, ok := allowed[origin]; !ok {
+				if c.Request.Method == http.MethodOptions {
+					c.AbortWithStatus(http.StatusForbidden)
+					return
+				}
+			} else {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Access-Control-Allow-Credentials", "true")
+				c.Header("Vary", "Origin")
+			}
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Ledger-Id")
-		c.Header("Access-Control-Expose-Headers", "Content-Length")
-		c.Header("Access-Control-Allow-Credentials", "true")
+		c.Header("Access-Control-Expose-Headers", "Content-Length, Content-Disposition")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
@@ -151,28 +177,31 @@ func UserID(c *gin.Context) uint {
 
 // getOrCreatePersonalLedger 获取用户的个人账本，没有则兜底创建（含 owner 成员关系）
 // 个人账本默认就该有，不该因缺失而报错
-func getOrCreatePersonalLedger(db *gorm.DB, uid uint) uint {
+func getOrCreatePersonalLedger(db *gorm.DB, uid uint) (uint, error) {
 	var ledger model.Ledger
-	_ = db.Where("owner_id = ? AND is_personal = ?", uid, true).First(&ledger).Error
+	err := db.Where("owner_id = ? AND is_personal = ?", uid, true).First(&ledger).Error
 	if ledger.ID != 0 {
-		return ledger.ID
+		return ledger.ID, nil
 	}
-	// 兜底创建
-	ledger = model.Ledger{
-		Name:       "我的个人账本",
-		OwnerID:    uid,
-		IsPersonal: true,
-		InviteCode: model.GenInviteCode(),
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
 	}
-	if err := db.Create(&ledger).Error; err != nil {
-		return 0
-	}
-	db.Create(&model.Membership{
-		LedgerID: ledger.ID,
-		UserID:   uid,
-		Role:     "owner",
+	err = db.Transaction(func(tx *gorm.DB) error {
+		ledger = model.Ledger{
+			Name:       "我的个人账本",
+			OwnerID:    uid,
+			IsPersonal: true,
+			InviteCode: model.GenInviteCode(),
+		}
+		if err := tx.Create(&ledger).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&model.Membership{LedgerID: ledger.ID, UserID: uid, Role: "owner"}).Error; err != nil {
+			return err
+		}
+		return nil
 	})
-	return ledger.ID
+	return ledger.ID, err
 }
 
 // LedgerID 从上下文获取 ledgerID

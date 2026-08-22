@@ -4,31 +4,26 @@
   "description": "AI 中文记账 App 前端",
   "scripts": {
     "dev:h5": "uni",
-    "build:h5": "uni build"
+    "build:h5": "uni build",
+    "dev:mp-weixin": "uni -p mp-weixin",
+    "build:mp-weixin": "uni build -p mp-weixin",
+    "build:release:mp-weixin": "node scripts/check-release-config.mjs && uni build -p mp-weixin && node scripts/check-mp-build.mjs",
+    "check:mp-weixin": "pnpm build:mp-weixin && node scripts/check-mp-build.mjs"
   },
   "dependencies": {
-    "@dcloudio/uni-app": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-app-plus": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-components": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-h5": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-alipay": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-baidu": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-jd": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-kuaishou": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-lark": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-qq": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-toutiao": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-weixin": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-mp-xhs": "3.0.0-alpha-5020120260710001",
-    "vue": "^3.4.21"
+    "@dcloudio/uni-app": "3.0.0-alpha-5020320260803001",
+    "@dcloudio/uni-components": "3.0.0-alpha-5020320260803001",
+    "@dcloudio/uni-h5": "3.0.0-alpha-5020320260803001",
+    "@dcloudio/uni-mp-weixin": "3.0.0-alpha-5020320260803001",
+    "vue": "3.4.21"
   },
   "devDependencies": {
-    "@dcloudio/types": "^3.4.8",
-    "@dcloudio/uni-automator": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-cli-shared": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/uni-stacktracey": "3.0.0-alpha-5020120260710001",
-    "@dcloudio/vite-plugin-uni": "3.0.0-alpha-5020120260710001",
-    "vite": "^5.2.8"
+    "@dcloudio/types": "3.4.31",
+    "@dcloudio/uni-automator": "3.0.0-alpha-5020320260803001",
+    "@dcloudio/uni-cli-shared": "3.0.0-alpha-5020320260803001",
+    "@dcloudio/uni-stacktracey": "3.0.0-alpha-5020320260803001",
+    "@dcloudio/vite-plugin-uni": "3.0.0-alpha-5020320260803001",
+    "vite": "5.2.8"
   },
   "packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319"
 }

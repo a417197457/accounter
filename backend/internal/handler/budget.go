@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"accounter/backend/internal/middleware"
 	"accounter/backend/internal/model"
@@ -23,14 +24,23 @@ func NewBudgetHandler() *BudgetHandler {
 
 // SetRequest 设置预算请求
 type SetBudgetRequest struct {
-	CategoryID *uint            `json:"category_id"`
+	CategoryID *uint           `json:"category_id"`
 	Amount     decimal.Decimal `json:"amount" binding:"required"`
 }
 
 // List 预算列表
 func (h *BudgetHandler) List(c *gin.Context) {
 	ledgerID := middleware.LedgerID(c)
-	data, err := h.service.ListBudgets(ledgerID)
+	monthStart := time.Now()
+	if month := c.Query("month"); month != "" {
+		parsed, err := time.ParseInLocation("2006-01", month, time.Local)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "月份格式应为 YYYY-MM"})
+			return
+		}
+		monthStart = parsed
+	}
+	data, err := h.service.ListBudgets(ledgerID, monthStart)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

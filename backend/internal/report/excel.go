@@ -17,7 +17,7 @@ func ExportTransactions(transactions []model.Transaction, month string) (*exceli
 	}()
 
 	// 标题行
-	headers := []string{"日期", "分类", "账户", "操作类型", "金额", "备注", "记账人"}
+	headers := []string{"日期", "分类", "实际账户", "支付渠道", "转入账户", "操作类型", "金额", "备注", "记账人"}
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		_ = f.SetCellValue("流水明细", cell, h)
@@ -29,7 +29,7 @@ func ExportTransactions(transactions []model.Transaction, month string) (*exceli
 		Fill:      excelize.Fill{Type: "pattern", Color: []string{"#F0F0F0"}, Pattern: 1},
 		Alignment: &excelize.Alignment{Vertical: "center", Horizontal: "center"},
 	})
-	_ = f.SetCellStyle("流水明细", "A1", "G1", style)
+	_ = f.SetCellStyle("流水明细", "A1", "I1", style)
 
 	opTypeMap := map[string]string{
 		"expense":    "支出",
@@ -50,6 +50,14 @@ func ExportTransactions(transactions []model.Transaction, month string) (*exceli
 		if tx.Account != nil {
 			accountName = tx.Account.Name
 		}
+		paymentName := ""
+		if tx.PaymentAccount != nil {
+			paymentName = tx.PaymentAccount.Name
+		}
+		toAccountName := ""
+		if tx.ToAccount != nil {
+			toAccountName = tx.ToAccount.Name
+		}
 		memberName := ""
 		if tx.Member != nil {
 			memberName = tx.Member.Nickname
@@ -61,14 +69,16 @@ func ExportTransactions(transactions []model.Transaction, month string) (*exceli
 		_ = f.SetCellValue("流水明细", fmt.Sprintf("A%d", row), occurred)
 		_ = f.SetCellValue("流水明细", fmt.Sprintf("B%d", row), categoryName)
 		_ = f.SetCellValue("流水明细", fmt.Sprintf("C%d", row), accountName)
-		_ = f.SetCellValue("流水明细", fmt.Sprintf("D%d", row), opTypeMap[tx.OpType])
-		_ = f.SetCellValue("流水明细", fmt.Sprintf("E%d", row), tx.Amount.String())
-		_ = f.SetCellValue("流水明细", fmt.Sprintf("F%d", row), tx.Remark)
-		_ = f.SetCellValue("流水明细", fmt.Sprintf("G%d", row), memberName)
+		_ = f.SetCellValue("流水明细", fmt.Sprintf("D%d", row), paymentName)
+		_ = f.SetCellValue("流水明细", fmt.Sprintf("E%d", row), toAccountName)
+		_ = f.SetCellValue("流水明细", fmt.Sprintf("F%d", row), opTypeMap[tx.OpType])
+		_ = f.SetCellValue("流水明细", fmt.Sprintf("G%d", row), tx.Amount.String())
+		_ = f.SetCellValue("流水明细", fmt.Sprintf("H%d", row), tx.Remark)
+		_ = f.SetCellValue("流水明细", fmt.Sprintf("I%d", row), memberName)
 	}
 
 	// 列宽
-	widths := map[string]float64{"A": 20, "B": 12, "C": 12, "D": 10, "E": 12, "F": 24, "G": 12}
+	widths := map[string]float64{"A": 20, "B": 12, "C": 14, "D": 12, "E": 14, "F": 10, "G": 12, "H": 24, "I": 12}
 	for col, w := range widths {
 		_ = f.SetColWidth("流水明细", col, col, w)
 	}
@@ -77,7 +87,7 @@ func ExportTransactions(transactions []model.Transaction, month string) (*exceli
 	_ = f.SetDocProps(&excelize.DocProperties{
 		Category: "记账",
 		Title:    fmt.Sprintf("Accounter %s 流水明细", month),
-		Created:   time.Now().Format("2006-01-02 15:04:05"),
+		Created:  time.Now().Format("2006-01-02 15:04:05"),
 	})
 
 	return f, nil

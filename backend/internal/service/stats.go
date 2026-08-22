@@ -44,21 +44,27 @@ type Overview struct {
 	Expense     decimal.Decimal `json:"expense"`
 	Balance     decimal.Decimal `json:"balance"`
 	TotalAssets decimal.Decimal `json:"total_assets"`
+	Transfer    decimal.Decimal `json:"transfer"` // 转账/还款，仅展示，不计入收支
 }
 
-// Overview 账本总览（全部流水的收入/支出/结余 + 未归档账户余额合计）
-func (s *StatsService) Overview(ledgerID uint) (*Overview, error) {
-	var income, expense decimal.Decimal
+// Overview 账本总览（可选时间范围的收入/支出/结余 + 未归档账户余额合计）
+func (s *StatsService) Overview(ledgerID uint, start, end *time.Time) (*Overview, error) {
+	var income, expense, transfer decimal.Decimal
 
 	rows := []struct {
 		OpType string
 		Sum    decimal.Decimal
 	}{}
-	err := s.db.Model(&model.Transaction{}).
+	query := s.db.Model(&model.Transaction{}).
 		Select("op_type, COALESCE(SUM(amount), 0) as sum").
-		Where("ledger_id = ? AND deleted_at IS NULL", ledgerID).
-		Group("op_type").
-		Scan(&rows).Error
+		Where("ledger_id = ? AND deleted_at IS NULL", ledgerID)
+	if start != nil {
+		query = query.Where("occurred_at >= ?", *start)
+	}
+	if end != nil {
+		query = query.Where("occurred_at <= ?", *end)
+	}
+	err := query.Group("op_type").Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("查询总览失败: %w", err)
 	}
@@ -67,16 +73,24 @@ func (s *StatsService) Overview(ledgerID uint) (*Overview, error) {
 		switch r.OpType {
 		case "income", "borrow_in":
 			income = income.Add(r.Sum)
-		case "expense", "borrow_out", "transfer":
+		case "expense", "borrow_out":
 			expense = expense.Add(r.Sum)
+		case "transfer":
+			transfer = transfer.Add(r.Sum)
 		}
 	}
 
-	// 总资产 = 未归档账户余额合计
+	// 净资产 = 普通账户资产 - 信用卡欠款（欠款只计 balance>0；溢缴 balance<0 不计负债）。
 	var totalAssets decimal.Decimal
 	err = s.db.Model(&model.Account{}).
 		Where("ledger_id = ? AND is_archived = ? AND deleted_at IS NULL", ledgerID, false).
-		Select("COALESCE(SUM(balance), 0)").
+		Select(`COALESCE(SUM(
+			CASE
+				WHEN type = 'credit' AND balance > 0 THEN -balance
+				WHEN type = 'credit' THEN 0
+				ELSE balance
+			END
+		), 0)`).
 		Scan(&totalAssets).Error
 	if err != nil {
 		return nil, fmt.Errorf("查询总资产失败: %w", err)
@@ -87,6 +101,7 @@ func (s *StatsService) Overview(ledgerID uint) (*Overview, error) {
 		Expense:     expense,
 		Balance:     income.Sub(expense),
 		TotalAssets: totalAssets,
+		Transfer:    transfer,
 	}, nil
 }
 
@@ -136,7 +151,7 @@ func (s *StatsService) Trend(ledgerID uint, granularity string, start, end *time
 		switch r.OpType {
 		case "income", "borrow_in":
 			m[r.Period].Income = m[r.Period].Income.Add(r.Sum)
-		case "expense", "borrow_out", "transfer":
+		case "expense", "borrow_out":
 			m[r.Period].Expense = m[r.Period].Expense.Add(r.Sum)
 		}
 	}
@@ -175,7 +190,9 @@ func (s *StatsService) CategoryBreakdown(ledgerID uint, kind string, start, end 
 	if end != nil {
 		query = query.Where("transactions.occurred_at <= ?", end)
 	}
-	query = query.Group("1, 2").
+	// MySQL 开启 ONLY_FULL_GROUP_BY 时，SELECT 中的 icon 表达式也必须参与分组。
+	// 按 1/2/3 三个投影列分组，同时兼容 SQLite 本地调试。
+	query = query.Group("1, 2, 3").
 		Order("amount desc")
 
 	var result []CategorySlice
@@ -229,7 +246,7 @@ func (s *StatsService) Monthly(ledgerID uint, months int) ([]MonthlyPoint, error
 		switch r.OpType {
 		case "income", "borrow_in":
 			m[r.Period].Income = m[r.Period].Income.Add(r.Sum)
-		case "expense", "borrow_out", "transfer":
+		case "expense", "borrow_out":
 			m[r.Period].Expense = m[r.Period].Expense.Add(r.Sum)
 		}
 	}
