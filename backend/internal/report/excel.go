@@ -12,9 +12,10 @@ import (
 // ExportTransactions 导出流水到 Excel，返回文件内容 bytes
 func ExportTransactions(transactions []model.Transaction, month string) (*excelize.File, error) {
 	f := excelize.NewFile()
-	defer func() {
-		_ = f.SetSheetName(f.GetSheetName(0), "流水明细")
-	}()
+	if err := f.SetSheetName(f.GetSheetName(0), "流水明细"); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("创建流水明细工作表: %w", err)
+	}
 
 	// 标题行
 	headers := []string{"日期", "分类", "实际账户", "支付渠道", "转入账户", "操作类型", "金额", "备注", "记账人"}
