@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"text/tabwriter"
 	"time"
 	"unicode/utf8"
 
@@ -24,27 +23,33 @@ func runOpsUsers(svc *service.OperationsService, args []string) {
 		log.Fatalf("查询用户汇总失败: %v", err)
 	}
 	fmt.Printf("注册用户总数: %d；当前第 %d 页，每页 %d 条\n", total, *page, *pageSize)
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "用户ID\t昵称\t登录方式\t登录用户名\t资金账户\t流水数\t支出合计\t收入合计\t最近流水\t注册时间")
+	rows := make([][]string, 0, len(records))
 	for _, record := range records {
 		username := record.Username
 		if record.LoginType == "wechat" {
 			username = "-"
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n",
-			record.UserID,
-			safeCell(displayName(record.Nickname, record.Username)),
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(record.UserID), 10),
+			displayName(record.Nickname, record.Username),
 			loginTypeLabel(record.LoginType),
-			safeCell(username),
-			record.AccountCount,
-			record.BillCount,
+			username,
+			strconv.FormatInt(record.AccountCount, 10),
+			strconv.FormatInt(record.BillCount, 10),
 			record.ExpenseTotal.StringFixed(2),
 			record.IncomeTotal.StringFixed(2),
 			formatOptionalTime(record.LastOccurredAt),
 			record.CreatedAt.In(time.Local).Format("2006-01-02 15:04"),
-		)
+		})
 	}
-	_ = w.Flush()
+	if err := writeTable(os.Stdout, []tableColumn{
+		{Title: "用户ID", AlignRight: true}, {Title: "昵称"}, {Title: "登录方式"}, {Title: "登录用户名"},
+		{Title: "资金账户", AlignRight: true}, {Title: "流水数", AlignRight: true},
+		{Title: "支出合计", AlignRight: true}, {Title: "收入合计", AlignRight: true},
+		{Title: "最近流水"}, {Title: "注册时间"},
+	}, rows); err != nil {
+		log.Fatalf("输出用户汇总失败: %v", err)
+	}
 }
 
 func runOpsBills(svc *service.OperationsService, args []string) {
@@ -70,8 +75,7 @@ func runOpsBills(svc *service.OperationsService, args []string) {
 		filterText += "，月份 " + *month
 	}
 	fmt.Printf("账单记录总数: %d（%s）；当前第 %d 页，每页 %d 条\n", total, filterText, *page, *pageSize)
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "流水ID\t用户ID\t用户\t发生时间\t类型\t金额\t账户\t分类\t备注")
+	rows := make([][]string, 0, len(records))
 	for _, record := range records {
 		remark := "[已隐藏，使用 --show-remark 查看]"
 		if *showRemark {
@@ -80,19 +84,25 @@ func runOpsBills(svc *service.OperationsService, args []string) {
 				remark = "-"
 			}
 		}
-		fmt.Fprintf(w, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			record.ID,
-			record.OwnerUserID,
-			safeCell(displayName(record.OwnerNickname, record.OwnerUsername)),
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(record.ID), 10),
+			strconv.FormatUint(uint64(record.OwnerUserID), 10),
+			displayName(record.OwnerNickname, record.OwnerUsername),
 			record.OccurredAt.In(time.Local).Format("2006-01-02 15:04"),
 			opTypeLabel(record.OpType),
 			record.Amount.StringFixed(2),
-			safeCell(record.AccountName),
-			safeCell(record.CategoryName),
+			record.AccountName,
+			record.CategoryName,
 			remark,
-		)
+		})
 	}
-	_ = w.Flush()
+	if err := writeTable(os.Stdout, []tableColumn{
+		{Title: "流水ID", AlignRight: true}, {Title: "用户ID", AlignRight: true}, {Title: "用户"},
+		{Title: "发生时间"}, {Title: "类型"}, {Title: "金额", AlignRight: true},
+		{Title: "账户"}, {Title: "分类"}, {Title: "备注"},
+	}, rows); err != nil {
+		log.Fatalf("输出账单失败: %v", err)
+	}
 }
 
 func displayName(nickname, username string) string {

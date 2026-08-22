@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"accounter/backend/internal/config"
@@ -184,8 +183,7 @@ func runList(svc *service.AIEntitlementService, args []string) {
 	if err != nil {
 		log.Fatalf("查询激活码失败: %v", err)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\t尾号\t批次\t状态\t到期时间\t兑换用户\t发放对象\t创建时间")
+	rows := make([][]string, 0, len(records))
 	for _, record := range records {
 		expiresText := "-"
 		if record.ExpiresAt != nil {
@@ -195,11 +193,17 @@ func runList(svc *service.AIEntitlementService, args []string) {
 		if record.RedeemedByUserID != nil {
 			userText = strconv.FormatUint(uint64(*record.RedeemedByUserID), 10)
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			record.ID, record.DisplaySuffix, safeCell(record.BatchName), record.Status, expiresText,
-			userText, safeCell(record.AssignedTo), record.CreatedAt.In(time.Local).Format("2006-01-02 15:04"))
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(record.ID), 10), record.DisplaySuffix, record.BatchName, record.Status,
+			expiresText, userText, record.AssignedTo, record.CreatedAt.In(time.Local).Format("2006-01-02 15:04"),
+		})
 	}
-	_ = w.Flush()
+	if err := writeTable(os.Stdout, []tableColumn{
+		{Title: "ID", AlignRight: true}, {Title: "尾号"}, {Title: "批次"}, {Title: "状态"},
+		{Title: "到期时间"}, {Title: "兑换用户", AlignRight: true}, {Title: "发放对象"}, {Title: "创建时间"},
+	}, rows); err != nil {
+		log.Fatalf("输出激活码列表失败: %v", err)
+	}
 }
 
 func safeCell(value string) string {
