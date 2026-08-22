@@ -5,7 +5,7 @@
         <view class="brand-eye"></view>
         <view class="brand-eye"></view>
       </view>
-      <text class="brand-name">青账</text>
+      <text class="brand-name">轻账</text>
       <text class="brand-copy">每一笔，都清清楚楚</text>
 
       <view class="card login-card">

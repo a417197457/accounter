@@ -30,11 +30,11 @@ func TestUpdateWechatProfile(t *testing.T) {
 	}
 	svc := &AuthService{db: db}
 
-	updated, err := svc.UpdateNickname(user.ID, "  青账用户  ")
+	updated, err := svc.UpdateNickname(user.ID, "  轻账用户  ")
 	if err != nil {
 		t.Fatalf("update nickname: %v", err)
 	}
-	if updated.Nickname != "青账用户" {
+	if updated.Nickname != "轻账用户" {
 		t.Fatalf("nickname not trimmed: %q", updated.Nickname)
 	}
 	if _, err := svc.UpdateNickname(user.ID, strings.Repeat("昵", 33)); err == nil {

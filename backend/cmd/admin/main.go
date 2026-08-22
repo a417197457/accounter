@@ -67,7 +67,7 @@ func loadEnvironmentFile() {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `青账激活码管理：
+	fmt.Fprintln(os.Stderr, `轻账激活码管理：
   accounter-admin activation-code create --count 20 --batch first-release --expires 2027-01-01 --output codes.csv
   accounter-admin activation-code list --status unused --batch first-release
   accounter-admin activation-code revoke --id 123

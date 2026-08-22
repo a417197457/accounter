@@ -4,7 +4,7 @@
     <view class="sidebar-brand">
       <view class="brand-mark"><text></text><text></text></view>
       <view>
-        <text class="brand-name">青账</text>
+        <text class="brand-name">轻账</text>
         <text class="brand-copy">清爽记账，心中有数</text>
       </view>
     </view>
