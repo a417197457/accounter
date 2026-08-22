@@ -47,7 +47,7 @@ export default {
   mounted() {
     const pages = getCurrentPages()
     this.currentPath = pages.length ? pages[pages.length - 1].route : ''
-    if (this.currentPath === 'pages/account/index' || this.currentPath === 'pages/category/index') {
+    if (this.currentPath === 'pages/account/index' || this.currentPath === 'pages/category/index' || this.currentPath === 'pages/ledger/index') {
       this.currentPath = 'pages/profile/index'
     }
   },

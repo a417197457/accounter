@@ -1,24 +1,24 @@
 <template>
-  <view class="page">
+  <view class="page" :class="{ 'selection-active': selectionMode }">
     <WebSidebar />
     <view class="page-head">
-      <text class="page-title">收支明细</text>
-      <text class="page-copy">每一笔都清楚，每个月都安心</text>
-    </view>
-    <!-- 账本切换 -->
-    <view class="ledger-tabs">
-      <view
-        class="tab"
-        :class="{ active: currentLedger?.id === ledger.id }"
-        v-for="ledger in ledgers"
-        :key="ledger.id"
-        @click="switchLedger(ledger)"
-      >
-        <text>{{ ledger.is_personal ? '个人' : ledger.name }}</text>
+      <view>
+        <text class="page-title">收支明细</text>
+        <text class="page-copy">每一笔都清楚，每个月都安心</text>
       </view>
+      <text class="batch-entry" @click="toggleSelectionMode">{{ selectionMode ? '取消' : '批量管理' }}</text>
+    </view>
+    <view class="current-ledger" @click="goLedgerManagement">
+      <view class="current-ledger-icon">{{ ledgerTypeIcon(currentLedger) }}</view>
+      <view class="current-ledger-main">
+        <text class="current-ledger-label">当前账本</text>
+        <text class="current-ledger-name">{{ currentLedger?.name || '正在加载' }}</text>
+      </view>
+      <text class="current-ledger-switch">切换账本 ›</text>
     </view>
 
     <view v-if="isSharedLedger" class="hint">{{ ledgerTypeLabel(currentLedger) }}只展示同步流水，可在这里单独移除副本</view>
+    <view v-if="selectionMode" class="selection-hint">点击流水进行多选，单次最多操作 100 笔</view>
 
     <view v-if="groupedTransactions.length === 0" class="empty">
       <text class="empty-title">暂无流水</text>
@@ -41,7 +41,12 @@
           </view>
           <view class="month-actions">
             <text
-              v-if="!isSharedLedger && targetLedgers.length > 0"
+              v-if="selectionMode"
+              class="sync-month"
+              @click.stop="toggleMonthSelection(group)"
+            >{{ isMonthSelected(group) ? '取消本月' : '选择本月' }}</text>
+            <text
+              v-else-if="!isSharedLedger && targetLedgers.length > 0"
               class="sync-month"
               @click.stop="pushMonth(group.month)"
             >⇪ 同步</text>
@@ -58,10 +63,15 @@
             <text class="date-label">{{ dateGroup.label }}</text>
             <view
               class="transaction-item"
+              :class="{ selected: isSelected(tx), disabled: selectionMode && !canSelectTransaction(tx) }"
               v-for="tx in dateGroup.transactions"
               :key="tx.id"
               @longpress="onLongPress(tx)"
+              @click="onTap(tx)"
             >
+              <view class="selection-check" v-if="selectionMode" :class="{ checked: isSelected(tx) }">
+                {{ isSelected(tx) ? '✓' : '' }}
+              </view>
               <view class="tx-icon" :class="tx.op_type">{{ categoryIcon(tx) }}</view>
               <view class="tx-main">
                 <view class="tx-title-row">
@@ -76,7 +86,7 @@
               </view>
               <view class="tx-side">
                 <text class="tx-amount" :class="tx.op_type">{{ formatAmount(tx) }}</text>
-                <text class="tx-more" v-if="!isSharedLedger || tx.source_id" @click.stop="showTxActions(tx)">•••</text>
+                <text class="tx-more" v-if="!selectionMode && (!isSharedLedger || tx.source_id)" @click.stop="showTxActions(tx)">•••</text>
               </view>
             </view>
           </view>
@@ -84,10 +94,28 @@
       </view>
     </view>
 
+    <view class="batch-bar" v-if="selectionMode">
+      <view class="batch-count">
+        <text>已选 {{ selectedCount }} 笔</text>
+        <text class="batch-clear" @click="clearSelection">清空</text>
+      </view>
+      <button
+        v-if="!isSharedLedger"
+        class="batch-button sync"
+        :disabled="selectedCount === 0 || targetLedgers.length === 0 || batchLoading"
+        @click="startBatchPush"
+      >同步</button>
+      <button
+        class="batch-button delete"
+        :disabled="selectedCount === 0 || batchLoading"
+        @click="batchDelete"
+      >删除</button>
+    </view>
+
     <!-- 选择同步目标账本 -->
     <view class="modal" v-if="showPush" @tap="showPush = false">
       <view class="modal-content" @tap.stop>
-        <text class="modal-title">选择同步到哪个账本</text>
+        <text class="modal-title">{{ pushTransactionIDs.length ? `同步已选 ${pushTransactionIDs.length} 笔` : '选择同步到哪个账本' }}</text>
         <view
           class="list-item"
           v-for="ledger in targetLedgers"
@@ -107,6 +135,8 @@ import { get, post, del } from '../../common/request.js'
 import { checkLogin } from '../../common/auth.js'
 import { paymentRouteLabel } from '../../common/account.js'
 
+const OPEN_LEDGER_KEY = 'open_ledger_id'
+
 export default {
   data() {
     return {
@@ -115,7 +145,11 @@ export default {
       groupedTransactions: [],
       showPush: false,
       pushTargetTx: null,
-      pushMonthValue: ''
+      pushMonthValue: '',
+      pushTransactionIDs: [],
+      selectionMode: false,
+      selectedMap: {},
+      batchLoading: false
     }
   },
   computed: {
@@ -124,6 +158,12 @@ export default {
     },
     targetLedgers() {
       return (this.ledgers || []).filter(l => !l.is_personal)
+    },
+    selectedIDs() {
+      return Object.keys(this.selectedMap).filter(id => this.selectedMap[id]).map(id => Number(id))
+    },
+    selectedCount() {
+      return this.selectedIDs.length
     }
   },
   onLoad() {
@@ -138,8 +178,11 @@ export default {
         const ledgers = await get('/ledgers')
         this.ledgers = ledgers || []
         if (this.ledgers.length === 0) return
+        const requestedID = Number(uni.getStorageSync(OPEN_LEDGER_KEY) || 0)
+        if (requestedID) uni.removeStorageSync(OPEN_LEDGER_KEY)
         const keepId = this.currentLedger?.id
         this.currentLedger =
+          this.ledgers.find(l => l.id === requestedID) ||
           this.ledgers.find(l => l.id === keepId) ||
           this.ledgers.find(l => l.is_personal) ||
           this.ledgers[0]
@@ -152,6 +195,7 @@ export default {
     },
     async switchLedger(ledger) {
       this.currentLedger = ledger
+      this.cancelSelection()
       await this.loadMonths()
     },
     async loadTransactions() {
@@ -163,6 +207,7 @@ export default {
     },
     async loadMonths() {
       if (!this.currentLedger) return
+      this.cancelSelection()
       try {
         const months = await get('/transaction-months', {}, { ledgerId: this.currentLedger.id })
         const current = this.currentMonth()
@@ -280,11 +325,79 @@ export default {
       const labels = { personal: '个人账本', family: '家庭账本', travel: '旅游账本', gift: '礼账账本' }
       return labels[ledger?.type] || (ledger?.is_personal ? '个人账本' : '家庭账本')
     },
+    ledgerTypeIcon(ledger) {
+      return ({ personal: '账', family: '🏠', travel: '✈️', gift: '🧧' })[ledger?.type] || '账'
+    },
+    goLedgerManagement() {
+      uni.navigateTo({ url: '/pages/ledger/index' })
+    },
+    toggleSelectionMode() {
+      if (this.selectionMode) {
+        this.cancelSelection()
+      } else {
+        this.selectionMode = true
+        this.selectedMap = {}
+      }
+    },
+    cancelSelection() {
+      this.selectionMode = false
+      this.selectedMap = {}
+      this.pushTransactionIDs = []
+    },
+    clearSelection() {
+      this.selectedMap = {}
+    },
+    canSelectTransaction(tx) {
+      return !this.isSharedLedger || Boolean(tx.source_id)
+    },
+    isSelected(tx) {
+      return Boolean(this.selectedMap[tx.id])
+    },
+    toggleTransaction(tx) {
+      if (!this.canSelectTransaction(tx)) {
+        uni.showToast({ title: '该流水不能在此账本删除', icon: 'none' })
+        return
+      }
+      const next = { ...this.selectedMap }
+      if (next[tx.id]) delete next[tx.id]
+      else if (this.selectedCount < 100) next[tx.id] = true
+      else {
+        uni.showToast({ title: '单次最多选择 100 笔', icon: 'none' })
+        return
+      }
+      this.selectedMap = next
+    },
+    async toggleMonthSelection(group) {
+      if (!group.loaded) await this.loadMonth(group)
+      const selectable = (this.groupedTransactions.find(item => item.month === group.month)?.transactions || [])
+        .filter(tx => this.canSelectTransaction(tx))
+      const allSelected = selectable.length > 0 && selectable.every(tx => this.isSelected(tx))
+      const next = { ...this.selectedMap }
+      if (allSelected) {
+        selectable.forEach(tx => delete next[tx.id])
+      } else {
+        const available = Math.max(0, 100 - this.selectedCount)
+        selectable.filter(tx => !next[tx.id]).slice(0, available).forEach(tx => { next[tx.id] = true })
+        if (selectable.filter(tx => !this.selectedMap[tx.id]).length > available) {
+          uni.showToast({ title: '已选择前 100 笔', icon: 'none' })
+        }
+      }
+      this.selectedMap = next
+    },
+    isMonthSelected(group) {
+      const selectable = (group.transactions || []).filter(tx => this.canSelectTransaction(tx))
+      return selectable.length > 0 && selectable.every(tx => this.isSelected(tx))
+    },
     onLongPress(tx) {
-      if (this.isSharedLedger && !tx.source_id) return
-      this.showTxActions(tx)
+      if (!this.canSelectTransaction(tx)) return
+      this.selectionMode = true
+      if (!this.isSelected(tx)) this.toggleTransaction(tx)
     },
     onTap(tx) {
+      if (this.selectionMode) {
+        this.toggleTransaction(tx)
+        return
+      }
       // H5 长按不便时，个人账本点击也可操作
       if (this.isSharedLedger && !tx.source_id) return
       // #ifdef H5
@@ -332,6 +445,46 @@ export default {
         }
       })
     },
+    batchDelete() {
+      if (!this.selectedCount || this.batchLoading) return
+      const content = this.isSharedLedger
+        ? `将从「${this.currentLedger?.name || '当前账本'}」移除 ${this.selectedCount} 条同步记录，不影响个人账本原流水。`
+        : `将删除 ${this.selectedCount} 条原流水，并同步删除其他账本里的对应记录。此操作不可撤销。`
+      uni.showModal({
+        title: '批量删除流水',
+        content,
+        confirmText: '确认删除',
+        confirmColor: '#df665d',
+        success: async result => {
+          if (!result.confirm) return
+          this.batchLoading = true
+          try {
+            const response = await post('/batch-delete-transactions', {
+              transaction_ids: this.selectedIDs
+            }, { ledgerId: this.currentLedger.id })
+            uni.showToast({ title: `已删除 ${response?.deleted || this.selectedCount} 笔`, icon: 'success' })
+            this.cancelSelection()
+            await this.loadTransactions()
+          } catch (err) {
+            uni.showToast({ title: err.message || '批量删除失败', icon: 'none' })
+          } finally {
+            this.batchLoading = false
+          }
+        }
+      })
+    },
+    startBatchPush() {
+      if (!this.selectedCount) return
+      if (this.targetLedgers.length === 0) {
+        uni.showToast({ title: '请先创建或加入其他账本', icon: 'none' })
+        return
+      }
+      this.pushTargetTx = null
+      this.pushMonthValue = ''
+      this.pushTransactionIDs = [...this.selectedIDs]
+      if (this.targetLedgers.length === 1) this.doPush(this.targetLedgers[0])
+      else this.showPush = true
+    },
     pushMonth(month) {
       if (this.targetLedgers.length === 0) {
         uni.showToast({ title: '请先创建或加入其他账本', icon: 'none' })
@@ -348,7 +501,23 @@ export default {
     async doPush(targetLedger) {
       this.showPush = false
       try {
-        if (this.pushMonthValue) {
+        if (this.pushTransactionIDs.length) {
+          this.batchLoading = true
+          const result = await post('/batch-push-transactions', {
+            transaction_ids: this.pushTransactionIDs,
+            target_ledger_id: targetLedger.id
+          }, { ledgerId: this.currentLedger.id })
+          const pushed = result?.pushed || 0
+          const skipped = result?.skipped || 0
+          const failed = result?.failed || 0
+          const suffix = [skipped ? `跳过 ${skipped} 笔` : '', failed ? `失败 ${failed} 笔` : ''].filter(Boolean).join('，')
+          uni.showToast({
+            title: pushed ? `已同步 ${pushed} 笔${suffix ? `，${suffix}` : ''}` : (suffix || '没有可同步流水'),
+            icon: 'none',
+            duration: 2800
+          })
+          this.cancelSelection()
+        } else if (this.pushMonthValue) {
           const result = await post('/push-month', {
             month: this.pushMonthValue,
             target_ledger_id: targetLedger.id
@@ -373,6 +542,8 @@ export default {
       } finally {
         this.pushTargetTx = null
         this.pushMonthValue = ''
+        this.pushTransactionIDs = []
+        this.batchLoading = false
       }
     },
     goChat() {
@@ -392,34 +563,26 @@ export default {
   background: #f7f9f7;
   box-sizing: border-box;
 }
-.page-head { padding: 0 4px 18px; }
+.page.selection-active { padding-bottom: 112px; }
+.page-head { padding: 0 4px 18px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .page-title { display: block; color: #18312b; font-size: 27px; font-weight: 700; }
 .page-copy { display: block; margin-top: 6px; color: #87968f; font-size: 13px; }
-.ledger-tabs::-webkit-scrollbar { display: none; }
-.ledger-tabs {
-  scrollbar-width: none;
-}
-.ledger-tabs {
+.batch-entry { flex-shrink: 0; margin-top: 5px; padding: 7px 11px; border-radius: 999px; color: #2fa680; background: #eaf7f2; font-size: 12px; font-weight: 650; }
+.current-ledger {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 15px;
   margin-bottom: 14px;
-  overflow-x: auto;
-}
-.tab {
-  padding: 9px 16px;
-  border-radius: 999px;
+  border: 1px solid #e3ebe7;
+  border-radius: 17px;
   background: #fff;
-  border: 1px solid #e5ebe8;
-  color: #71817a;
-  font-size: 14px;
-  white-space: nowrap;
 }
-.tab.active {
-  background: #42c39c;
-  border-color: #42c39c;
-  color: #fff;
-  box-shadow: 0 7px 16px rgba(66, 195, 156, 0.18);
-}
+.current-ledger-icon { width: 39px; height: 39px; flex: 0 0 39px; display: flex; align-items: center; justify-content: center; border-radius: 13px; color: #2d8e70; background: #eaf7f2; font-size: 18px; font-weight: 700; }
+.current-ledger-main { flex: 1; min-width: 0; }
+.current-ledger-label { display: block; color: #98a59f; font-size: 10px; }
+.current-ledger-name { display: block; margin-top: 2px; color: #263f38; font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.current-ledger-switch { flex-shrink: 0; color: #36a984; font-size: 12px; }
 .hint {
   font-size: 12px;
   color: #71817a;
@@ -428,6 +591,7 @@ export default {
   padding: 10px 12px;
   margin-bottom: 14px;
 }
+.selection-hint { padding: 9px 12px; margin-bottom: 12px; color: #7b6b3f; background: #fff7df; border-radius: 11px; font-size: 12px; }
 .empty {
   text-align: center;
   padding: 64px 20px;
@@ -542,6 +706,10 @@ export default {
   padding: 15px 0;
   border-bottom: 1px solid #edf1ee;
 }
+.transaction-item.selected { margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 13px; background: #f0faf6; }
+.transaction-item.disabled { opacity: .52; }
+.selection-check { width: 22px; height: 22px; flex: 0 0 22px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; border: 1.5px solid #cbd7d2; border-radius: 7px; color: #fff; font-size: 13px; }
+.selection-check.checked { border-color: #42c39c; background: #42c39c; }
 .tx-icon {
   width: 38px; height: 38px; flex: 0 0 38px;
   display: flex; align-items: center; justify-content: center;
@@ -602,6 +770,13 @@ export default {
 .tx-amount.borrow_in {
   color: #36b88f;
 }
+.batch-bar { position: fixed; z-index: 900; left: 12px; right: 12px; bottom: calc(58px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid #dfe8e4; border-radius: 17px; background: rgba(255,255,255,.97); box-shadow: 0 10px 35px rgba(24,49,43,.16); }
+.batch-count { flex: 1; min-width: 0; display: flex; flex-direction: column; color: #31564c; font-size: 13px; font-weight: 700; }
+.batch-clear { margin-top: 2px; color: #8b9994; font-size: 10px; font-weight: 400; }
+.batch-button { width: 70px; min-height: 38px; margin: 0; padding: 8px 10px; border-radius: 11px; font-size: 13px; line-height: 1.4; }
+.batch-button.sync { color: #fff; background: #42c39c; }
+.batch-button.delete { color: #fff; background: #e56e66; }
+.batch-button[disabled] { color: #9da9a4; background: #e8edeb; opacity: 1; }
 .modal {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
@@ -632,5 +807,8 @@ export default {
 }
 .list-item:active {
   background: #f2f7f5;
+}
+@media (min-width: 900px) {
+  .batch-bar { left: 256px; right: 36px; bottom: 24px; max-width: 860px; margin: 0 auto; }
 }
 </style>

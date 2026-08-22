@@ -267,40 +267,83 @@ func (s *TransactionService) Update(ledgerID, userID, id uint, next *model.Trans
 
 // Delete 删除流水。删除同步副本只影响当前账本；删除源流水会级联删除所有副本。
 func (s *TransactionService) Delete(ledgerID, userID, id uint) error {
-	var t model.Transaction
-	if err := s.db.First(&t, "id = ? AND ledger_id = ?", id, ledgerID).Error; err != nil {
-		return errors.New("流水不存在")
+	_, err := s.DeleteBatch(ledgerID, userID, []uint{id})
+	return err
+}
+
+const maxBatchTransactions = 100
+
+// DeleteBatch 在同一事务中批量删除流水。源流水的所有同步副本也在同一事务中删除，
+// 在其他账本删除同步副本则只影响当前账本。
+func (s *TransactionService) DeleteBatch(ledgerID, userID uint, ids []uint) (int, error) {
+	transactionIDs, err := normalizeTransactionIDs(ids)
+	if err != nil {
+		return 0, err
 	}
-	if t.SourceID != nil {
-		return s.db.Transaction(func(tx *gorm.DB) error {
-			if err := s.applyBalance(tx, &t, -1); err != nil {
-				return err
-			}
-			if err := tx.Delete(&t).Error; err != nil {
-				return fmt.Errorf("删除同步流水失败: %w", err)
-			}
-			return nil
-		})
-	}
-	if err := s.assertPersonalLedger(ledgerID); err != nil {
-		return err
+	if !s.isMember(ledgerID, userID) {
+		return 0, errNotMember
 	}
 
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.applyBalance(tx, &t, -1); err != nil {
-			return err
+	var deleted int
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var ledger model.Ledger
+		if err := tx.First(&ledger, ledgerID).Error; err != nil {
+			return errors.New("账本不存在")
 		}
-		if err := tx.Delete(&t).Error; err != nil {
-			return fmt.Errorf("删除流水失败: %w", err)
+		var transactions []model.Transaction
+		if err := tx.Where("ledger_id = ? AND id IN ? AND deleted_at IS NULL", ledgerID, transactionIDs).
+			Order("id ASC").Find(&transactions).Error; err != nil {
+			return fmt.Errorf("查询流水失败: %w", err)
+		}
+		if len(transactions) != len(transactionIDs) {
+			return errors.New("部分流水不存在或不属于当前账本，请刷新后重试")
+		}
+		for i := range transactions {
+			item := &transactions[i]
+			if item.SourceID == nil && !ledger.IsPersonal {
+				return errSharedDirectCreate
+			}
+			if err := s.applyBalance(tx, item, -1); err != nil {
+				return err
+			}
+			if item.SourceID == nil {
+				if err := s.deleteCopiesInTx(tx, item.ID); err != nil {
+					return err
+				}
+			}
+			if err := tx.Delete(item).Error; err != nil {
+				return fmt.Errorf("删除流水失败: %w", err)
+			}
+			deleted++
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
+	return deleted, nil
+}
 
-	_ = s.deleteCopies(id)
-	return nil
+func normalizeTransactionIDs(ids []uint) ([]uint, error) {
+	if len(ids) == 0 {
+		return nil, errors.New("请至少选择一笔流水")
+	}
+	if len(ids) > maxBatchTransactions {
+		return nil, fmt.Errorf("单次最多操作 %d 笔流水", maxBatchTransactions)
+	}
+	seen := make(map[uint]struct{}, len(ids))
+	result := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			return nil, errors.New("流水 ID 无效")
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result, nil
 }
 
 // ListRequest 流水列表请求参数
@@ -546,6 +589,45 @@ type PushMonthResult struct {
 	Skipped int `json:"skipped"`
 }
 
+// PushBatchResult 批量同步结果；已同步或不支持同步的流水计入 skipped。
+type PushBatchResult struct {
+	Pushed  int `json:"pushed"`
+	Skipped int `json:"skipped"`
+	Failed  int `json:"failed"`
+}
+
+// PushBatch 将选中的个人账本流水逐笔同步到目标账本，保持单笔同步的幂等语义。
+func (s *TransactionService) PushBatch(srcLedgerID uint, ids []uint, targetLedgerID, userID uint) (*PushBatchResult, error) {
+	transactionIDs, err := normalizeTransactionIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	if !s.isMember(srcLedgerID, userID) || !s.isMember(targetLedgerID, userID) {
+		return nil, errNotMember
+	}
+	var srcLedger, targetLedger model.Ledger
+	if err := s.db.First(&srcLedger, srcLedgerID).Error; err != nil || !srcLedger.IsPersonal {
+		return nil, errNotPersonalSource
+	}
+	if err := s.db.First(&targetLedger, targetLedgerID).Error; err != nil || targetLedger.IsPersonal {
+		return nil, errTargetMustShared
+	}
+
+	result := &PushBatchResult{}
+	for _, id := range transactionIDs {
+		_, pushErr := s.PushToLedger(srcLedgerID, id, targetLedgerID, userID)
+		switch {
+		case pushErr == nil:
+			result.Pushed++
+		case errors.Is(pushErr, errAlreadyPushed), errors.Is(pushErr, errTransferNoPush):
+			result.Skipped++
+		default:
+			result.Failed++
+		}
+	}
+	return result, nil
+}
+
 // PushMonth 整月同步个人账本 income/expense 到其他类型账本
 func (s *TransactionService) PushMonth(srcLedgerID uint, month string, targetLedgerID, userID uint) (*PushMonthResult, error) {
 	t, err := time.ParseInLocation("2006-01", month, time.Local)
@@ -619,21 +701,21 @@ func (s *TransactionService) syncCopies(src *model.Transaction) error {
 	return nil
 }
 
-// deleteCopies 源流水删除后级联删除副本
-func (s *TransactionService) deleteCopies(srcID uint) error {
+// deleteCopiesInTx 源流水删除后在同一事务中级联删除并冲回所有副本余额。
+func (s *TransactionService) deleteCopiesInTx(tx *gorm.DB, srcID uint) error {
 	var copies []model.Transaction
-	if err := s.db.Where("source_id = ?", srcID).Find(&copies).Error; err != nil {
+	if err := tx.Where("source_id = ? AND deleted_at IS NULL", srcID).Find(&copies).Error; err != nil {
 		return err
 	}
 
 	for i := range copies {
-		copy := copies[i]
-		_ = s.db.Transaction(func(tx *gorm.DB) error {
-			if err := s.applyBalance(tx, &copy, -1); err != nil {
-				return err
-			}
-			return tx.Delete(&copy).Error
-		})
+		copy := &copies[i]
+		if err := s.applyBalance(tx, copy, -1); err != nil {
+			return err
+		}
+		if err := tx.Delete(copy).Error; err != nil {
+			return fmt.Errorf("删除同步流水失败: %w", err)
+		}
 	}
 	return nil
 }

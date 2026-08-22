@@ -8,7 +8,12 @@ import (
 	"accounter/backend/internal/repository"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+const MaxOwnedSharedLedgers int64 = 10
+
+var ErrLedgerCreateLimit = errors.New("每个用户最多创建 10 个账本")
 
 // LedgerService 账本服务
 type LedgerService struct {
@@ -54,54 +59,53 @@ func (s *LedgerService) Create(userID uint, name, ledgerType string) (*model.Led
 	if !model.ValidLedgerType(ledgerType) || ledgerType == model.LedgerTypePersonal {
 		return nil, "", errors.New("账本类型只支持家庭、旅游或礼账")
 	}
-	// 生成邀请码
-	inviteCode := generateRandomString(6)
-
-	// 确保邀请码唯一
-	for {
-		var count int64
-		s.db.Model(&model.Ledger{}).Where("invite_code = ?", inviteCode).Count(&count)
-		if count == 0 {
-			break
+	var ledger model.Ledger
+	var inviteCode string
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		// 锁住当前用户行，确保并发创建也不能突破 10 个上限。
+		var user model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&user, userID).Error; err != nil {
+			return errors.New("用户不存在")
 		}
+		var ownedCount int64
+		if err := tx.Model(&model.Ledger{}).
+			Where("owner_id = ? AND is_personal = ? AND deleted_at IS NULL", userID, false).
+			Count(&ownedCount).Error; err != nil {
+			return fmt.Errorf("查询账本数量失败: %w", err)
+		}
+		if ownedCount >= MaxOwnedSharedLedgers {
+			return ErrLedgerCreateLimit
+		}
+
 		inviteCode = generateRandomString(6)
-	}
+		for {
+			var count int64
+			if err := tx.Model(&model.Ledger{}).Where("invite_code = ?", inviteCode).Count(&count).Error; err != nil {
+				return fmt.Errorf("检查邀请码失败: %w", err)
+			}
+			if count == 0 {
+				break
+			}
+			inviteCode = generateRandomString(6)
+		}
 
-	// 创建账本
-	ledger := model.Ledger{
-		Name:       name,
-		OwnerID:    userID,
-		IsPersonal: false,
-		Type:       ledgerType,
-		InviteCode: inviteCode,
+		ledger = model.Ledger{
+			Name: name, OwnerID: userID, IsPersonal: false, Type: ledgerType, InviteCode: inviteCode,
+		}
+		if err := tx.Create(&ledger).Error; err != nil {
+			return fmt.Errorf("创建账本失败: %w", err)
+		}
+		if err := tx.Create(&model.Membership{LedgerID: ledger.ID, UserID: userID, Role: "owner"}).Error; err != nil {
+			return fmt.Errorf("创建成员关系失败: %w", err)
+		}
+		if err := SeedDefaultData(tx, ledger.ID, userID); err != nil {
+			return fmt.Errorf("初始化默认数据失败: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, "", err
 	}
-
-	// 使用事务确保账本和成员关系同时创建
-	tx := s.db.Begin()
-	if err := tx.Create(&ledger).Error; err != nil {
-		tx.Rollback()
-		return nil, "", fmt.Errorf("创建账本失败: %w", err)
-	}
-
-	// 创建 owner 成员关系
-	membership := model.Membership{
-		LedgerID: ledger.ID,
-		UserID:   userID,
-		Role:     "owner",
-	}
-	if err := tx.Create(&membership).Error; err != nil {
-		tx.Rollback()
-		return nil, "", fmt.Errorf("创建成员关系失败: %w", err)
-	}
-
-	// 播种默认账户和分类
-	if err := SeedDefaultData(tx, ledger.ID, userID); err != nil {
-		tx.Rollback()
-		return nil, "", fmt.Errorf("初始化默认数据失败: %w", err)
-	}
-
-	tx.Commit()
-
 	return &ledger, inviteCode, nil
 }
 

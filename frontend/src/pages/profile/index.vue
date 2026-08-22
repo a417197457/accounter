@@ -19,46 +19,15 @@
     <view class="section">
       <view class="section-header">
         <text class="section-title">我的账本</text>
-        <text class="section-action" @click="showCreateModal">+ 创建</text>
+        <text class="section-action" @click="goLedgerManagement">查看全部</text>
       </view>
-
-      <view class="card ledger-item" v-for="ledger in ledgers" :key="ledger.id">
-        <view class="ledger-main">
-          <view class="ledger-name-row">
-            <text class="ledger-name">{{ ledger.name }}</text>
-            <text class="ledger-badge" v-if="ledger.is_personal">个人</text>
-            <text class="ledger-badge type" v-else>{{ ledgerTypeLabel(ledger) }}</text>
-            <text class="ledger-badge owner" v-if="ledger.role === 'owner' && !ledger.is_personal">创建者</text>
-          </view>
-          <text class="ledger-meta">{{ ledger.member_count }} 位成员</text>
-          <text class="ledger-tip" v-if="ledger.is_personal">记账与 AI 默认写入此账本</text>
-          <text class="ledger-tip" v-else>通过明细页将个人账单同步到这里</text>
+      <view class="manage-card" @click="goLedgerManagement">
+        <view class="manage-icon mint">本</view>
+        <view class="manage-main">
+          <text class="manage-title">账本管理</text>
+          <text class="manage-copy">个人账本 + {{ sharedLedgerCount }} 个其他账本</text>
         </view>
-        <view class="ledger-actions">
-          <text
-            class="action-link"
-            @click="showInviteModal(ledger)"
-            v-if="ledger.role === 'owner' && !ledger.is_personal"
-          >邀请码</text>
-          <text class="action-link" @click="showMembers(ledger)" v-if="!ledger.is_personal">成员</text>
-          <text class="action-link danger" @click="leaveLedger(ledger)" v-if="ledger.role === 'member'">退出</text>
-        </view>
-      </view>
-
-      <view class="card empty" v-if="ledgers.length === 0">
-        <text>暂无账本</text>
-      </view>
-    </view>
-
-    <view class="section">
-      <view class="section-header">
-        <text class="section-title">加入共享账本</text>
-      </view>
-      <view class="card">
-        <view class="join-row">
-          <input class="input join-input" v-model="joinCode" placeholder="输入 6 位邀请码" maxlength="6" />
-          <button class="btn btn-primary join-btn" @click="joinLedger" :loading="joinLoading">加入</button>
-        </view>
+        <text class="manage-chevron">›</text>
       </view>
     </view>
 
@@ -453,6 +422,9 @@ export default {
     }
   },
   computed: {
+    sharedLedgerCount() {
+      return this.ledgers.filter(item => !item.is_personal).length
+    },
     linkCandidates() {
       return this.accounts.filter(account => !account.is_archived && (account.type === 'savings' || account.type === 'credit'))
     },
@@ -546,6 +518,9 @@ export default {
     this.$nextTick(() => setTimeout(() => this.fixInputs(), 100))
   },
   methods: {
+    goLedgerManagement() {
+      uni.navigateTo({ url: '/pages/ledger/index' })
+    },
     goAccountManagement() {
       uni.navigateTo({ url: '/pages/account/index' })
     },

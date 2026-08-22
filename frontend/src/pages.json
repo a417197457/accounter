@@ -31,6 +31,12 @@
       }
     },
     {
+      "path": "pages/ledger/index",
+      "style": {
+        "navigationBarTitleText": "我的账本"
+      }
+    },
+    {
       "path": "pages/login/index",
       "style": {
         "navigationBarTitleText": "登录"

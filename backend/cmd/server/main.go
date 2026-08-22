@@ -145,6 +145,8 @@ func main() {
 
 			// 整月推送（独立路径，避免与 /transactions/:id 冲突）
 			business.POST("/push-month", transactionHandler.PushMonth)
+			business.POST("/batch-delete-transactions", transactionHandler.DeleteBatch)
+			business.POST("/batch-push-transactions", transactionHandler.PushBatch)
 			// 月份摘要同样使用独立路径，避免静态 /months 与 /:id 冲突。
 			business.GET("/transaction-months", transactionHandler.ListMonths)
 

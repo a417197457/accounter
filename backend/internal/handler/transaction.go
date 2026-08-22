@@ -306,6 +306,57 @@ type PushRequest struct {
 	TargetLedgerID uint `json:"target_ledger_id" binding:"required"`
 }
 
+type BatchTransactionRequest struct {
+	TransactionIDs []uint `json:"transaction_ids" binding:"required"`
+}
+
+type BatchPushRequest struct {
+	TransactionIDs []uint `json:"transaction_ids" binding:"required"`
+	TargetLedgerID uint   `json:"target_ledger_id" binding:"required"`
+}
+
+// DeleteBatch 批量删除当前账本内选中的流水。
+func (h *TransactionHandler) DeleteBatch(c *gin.Context) {
+	ledgerID := middleware.LedgerID(c)
+	userID := middleware.UserID(c)
+	var req BatchTransactionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+	deleted, err := h.service.DeleteBatch(ledgerID, userID, req.TransactionIDs)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	observability.Event(c, "transactions_batch_deleted", "selected", len(req.TransactionIDs), "deleted", deleted)
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"deleted": deleted}})
+}
+
+// PushBatch 批量同步选中的个人流水到目标账本。
+func (h *TransactionHandler) PushBatch(c *gin.Context) {
+	ledgerID := middleware.LedgerID(c)
+	userID := middleware.UserID(c)
+	var req BatchPushRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+	result, err := h.service.PushBatch(ledgerID, req.TransactionIDs, req.TargetLedgerID, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	observability.Event(c, "transactions_batch_pushed",
+		"target_ledger_id", req.TargetLedgerID,
+		"selected", len(req.TransactionIDs),
+		"pushed", result.Pushed,
+		"skipped", result.Skipped,
+		"failed", result.Failed,
+	)
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
 // Push 单笔同步到其他类型账本
 func (h *TransactionHandler) Push(c *gin.Context) {
 	srcLedgerID := middleware.LedgerID(c)
