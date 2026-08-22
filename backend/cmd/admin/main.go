@@ -29,21 +29,37 @@ func main() {
 	if _, err := repository.NewDB(cfg); err != nil {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
-	svc := service.NewAIEntitlementService()
-
 	args := os.Args[1:]
-	if len(args) < 2 || args[0] != "activation-code" {
+	if len(args) < 2 {
 		printUsage()
 		os.Exit(2)
 	}
 
-	switch args[1] {
-	case "create":
-		runCreate(svc, args[2:])
-	case "list":
-		runList(svc, args[2:])
-	case "revoke":
-		runRevoke(svc, args[2:])
+	switch args[0] {
+	case "activation-code":
+		svc := service.NewAIEntitlementService()
+		switch args[1] {
+		case "create":
+			runCreate(svc, args[2:])
+		case "list":
+			runList(svc, args[2:])
+		case "revoke":
+			runRevoke(svc, args[2:])
+		default:
+			printUsage()
+			os.Exit(2)
+		}
+	case "ops":
+		svc := service.NewOperationsService()
+		switch args[1] {
+		case "users":
+			runOpsUsers(svc, args[2:])
+		case "bills":
+			runOpsBills(svc, args[2:])
+		default:
+			printUsage()
+			os.Exit(2)
+		}
 	default:
 		printUsage()
 		os.Exit(2)
@@ -67,7 +83,12 @@ func loadEnvironmentFile() {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `轻账激活码管理：
+	fmt.Fprintln(os.Stderr, `轻账运维管理：
+  accounter-admin ops users --page 1 --page-size 50
+  accounter-admin ops bills --user-id 12 --month 2026-08 --page 1 --page-size 50
+  accounter-admin ops bills --user-id 12 --show-remark
+
+激活码管理：
   accounter-admin activation-code create --count 20 --batch first-release --expires 2027-01-01 --output codes.csv
   accounter-admin activation-code list --status unused --batch first-release
   accounter-admin activation-code revoke --id 123

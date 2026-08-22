@@ -37,9 +37,25 @@ sudo zgrep '"log_type":"audit"' /opt/accounter/logs/accounter-*.log.gz
 
 首次切换 MySQL 会执行 GORM 自动迁移；正式变更前先做 RDS 快照。详细上线清单见根目录 `DEV_GUIDE.md`。
 
-## AI 激活码日常管理
+## 运维查询与 AI 激活码管理
 
-发布脚本会把仅管理员可执行的工具安装到 `/opt/accounter/bin/accounter-admin`。它默认读取 `/etc/accounter/env` 并连接生产 RDS，数据库只保存激活码 HMAC，明文只在创建时输出一次。
+发布脚本会把仅管理员可执行的工具安装到 `/opt/accounter/bin/accounter-admin`。它默认读取 `/etc/accounter/env` 并连接生产 RDS。
+
+运维查询是只读操作。用户列表会显示注册用户总数、每个用户的资金账户数、流水数和收支汇总；账单可按用户 ID 和月份分页查询。统计只包含个人账本的原始流水，不重复计算同步到旅游、礼账本等其他账本的副本。默认隐藏账单备注，也不会输出密码、微信 OpenID 等登录凭据。
+
+```bash
+# 查询注册用户和每个用户的流水汇总
+sudo /opt/accounter/bin/accounter-admin ops users --page 1 --page-size 50
+
+# 查询指定用户在指定月份的账单
+sudo /opt/accounter/bin/accounter-admin ops bills \
+  --user-id 12 --month 2026-08 --page 1 --page-size 50
+
+# 确有排查需要时才显示账单备注
+sudo /opt/accounter/bin/accounter-admin ops bills --user-id 12 --show-remark
+```
+
+激活码数据库只保存 HMAC，明文只在创建时输出一次：
 
 ```bash
 # 创建 20 个首发激活码，2027-01-01 当天仍可兑换；CSV 权限固定为 600
