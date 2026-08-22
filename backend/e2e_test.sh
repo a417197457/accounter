@@ -22,6 +22,18 @@ LEDGERS=$(curl -s "$BASE/ledgers" -H "Authorization: Bearer $TOKEN_A")
 echo "$LEDGERS"
 PERSONAL=$(python3 -c "import json,sys; ls=json.loads(sys.argv[1])['data']; print(next(x['id'] for x in ls if x['is_personal']))" "$LEDGERS")
 
+echo "== update nickname and avatar =="
+PROFILE=$(curl -s -X PUT "$BASE/me" -H "Authorization: Bearer $TOKEN_A" -H 'Content-Type: application/json' \
+  -d '{"nickname":"微信昵称测试"}')
+echo "$PROFILE"
+echo "$PROFILE" | grep -q '微信昵称测试' || { echo "FAIL: nickname update failed"; exit 1; }
+AVATAR=$(curl -s -X POST "$BASE/me/avatar" -H "Authorization: Bearer $TOKEN_A" \
+  -F 'avatar=@../frontend/src/static/tab/profile-v2.png;type=image/png')
+echo "$AVATAR"
+echo "$AVATAR" | grep -q 'avatar_url' || { echo "FAIL: avatar upload failed"; exit 1; }
+AVATAR_PATH=$(json_get "$AVATAR" "d['data']['avatar_url'].split('?')[0]")
+curl -fsS "http://127.0.0.1:18080$AVATAR_PATH" >/dev/null || { echo "FAIL: avatar cannot be read"; exit 1; }
+
 ACCOUNTS=$(curl -s "$BASE/accounts" -H "Authorization: Bearer $TOKEN_A")
 ACC_ID=$(json_get "$ACCOUNTS" "d['data'][0]['id']")
 CATS=$(curl -s "$BASE/categories/flat?kind=expense" -H "Authorization: Bearer $TOKEN_A")
@@ -46,6 +58,8 @@ echo "== join travel ledger =="
 JOIN=$(curl -s -X POST "$BASE/ledgers/join" -H "Authorization: Bearer $TOKEN_B" -H 'Content-Type: application/json' \
   -d "{\"code\":\"$INVITE\"}")
 echo "$JOIN"
+MEMBERS=$(curl -s "$BASE/ledgers/$FAM_ID/members" -H "Authorization: Bearer $TOKEN_A")
+echo "$MEMBERS" | grep -q 'avatar_url' || { echo "FAIL: member directory missing avatar"; exit 1; }
 
 echo "== direct create on travel ledger (should fail) =="
 # need target ledger account/category ids

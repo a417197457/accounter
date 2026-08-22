@@ -142,6 +142,8 @@ fi
 "${SUDO[@]}" install -d -o accounter -g accounter -m 755 /opt/accounter/bin
 "${SUDO[@]}" install -d -o accounter -g accounter -m 755 /opt/accounter/backups
 "${SUDO[@]}" install -d -o accounter -g accounter -m 750 /opt/accounter/logs
+"${SUDO[@]}" install -d -o accounter -g accounter -m 750 /opt/accounter/uploads
+"${SUDO[@]}" install -d -o accounter -g accounter -m 750 /opt/accounter/uploads/avatars
 "${SUDO[@]}" install -d -o accounter -g accounter -m 755 "${BACKUP_DIR}"
 "${SUDO[@]}" install -d -o accounter -g accounter -m 755 "${NEW_WEB_DIR}"
 

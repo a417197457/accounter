@@ -2,12 +2,18 @@
   <view class="page">
     <WebSidebar />
     <view class="card user-card" v-if="user">
-      <view class="avatar">{{ (user.nickname || user.username || '我').slice(0, 1) }}</view>
+      <image v-if="user.avatar_url" class="avatar avatar-image" :src="avatarSrc(user.avatar_url)" mode="aspectFill" />
+      <view v-else class="avatar">{{ (user.nickname || user.username || '我').slice(0, 1) }}</view>
       <view class="user-info">
         <text class="nickname">{{ user.nickname || user.username }}</text>
-        <text class="username">@{{ user.username }}</text>
+        <text class="username">{{ userIdentityLabel(user) }}</text>
       </view>
-      <text class="logout-link" @click="logout">退出</text>
+      <view class="user-actions">
+        <!-- #ifdef MP-WEIXIN -->
+        <text class="profile-link" @click="openProfileEditor">编辑资料</text>
+        <!-- #endif -->
+        <text class="logout-link" @click="logout">退出</text>
+      </view>
     </view>
 
     <view class="section">
@@ -181,6 +187,30 @@
       </view>
     </view>
 
+    <!-- #ifdef MP-WEIXIN -->
+    <view class="modal" v-if="showProfileEditor" @tap="showProfileEditor = false">
+      <view class="modal-content profile-editor" @tap.stop>
+        <text class="modal-title">微信头像和昵称</text>
+        <text class="profile-editor-tip">头像和昵称由你主动选择，保存后会显示在个人页和账本成员信息中。</text>
+        <button class="avatar-picker" open-type="chooseAvatar" @chooseavatar="onChooseAvatar">
+          <image v-if="profileAvatarPath || user?.avatar_url" class="profile-avatar-preview" :src="profileAvatarPath || avatarSrc(user?.avatar_url)" mode="aspectFill" />
+          <view v-else class="profile-avatar-placeholder">选头像</view>
+        </button>
+        <input
+          class="input profile-nickname-input"
+          type="nickname"
+          v-model="profileNickname"
+          maxlength="32"
+          placeholder="填写微信昵称"
+        />
+        <view class="modal-actions">
+          <button class="btn btn-secondary" @click="showProfileEditor = false">以后再说</button>
+          <button class="btn btn-primary" @click="saveProfile" :loading="profileLoading">保存</button>
+        </view>
+      </view>
+    </view>
+    <!-- #endif -->
+
     <view class="modal" v-if="showInvite" @tap="showInvite = false">
       <view class="modal-content" @tap.stop>
         <text class="modal-title">邀请码</text>
@@ -195,9 +225,13 @@
         <text class="modal-title">成员列表</text>
         <view class="member-list">
           <view class="member-item" v-for="m in members" :key="m.user_id">
-            <view>
-              <text class="member-name">{{ m.nickname || m.username }}</text>
-              <text class="member-role">{{ m.role === 'owner' ? '创建者' : '成员' }}</text>
+            <view class="member-identity">
+              <image v-if="m.avatar_url" class="member-avatar" :src="avatarSrc(m.avatar_url)" mode="aspectFill" />
+              <view v-else class="member-avatar member-avatar-fallback">{{ (m.nickname || m.username || '成').slice(0, 1) }}</view>
+              <view>
+                <text class="member-name">{{ m.nickname || m.username }}</text>
+                <text class="member-role">{{ m.role === 'owner' ? '创建者' : '成员' }}</text>
+              </view>
             </view>
             <text
               class="action-link danger"
@@ -357,7 +391,7 @@
 
 <script>
 import { get, post, put, del } from '../../common/request.js'
-import { TOKEN_KEY, USER_KEY } from '../../common/config.js'
+import { BASE_URL, TOKEN_KEY, USER_KEY } from '../../common/config.js'
 import { accountMoneyText } from '../../common/money.js'
 
 export default {
@@ -412,6 +446,10 @@ export default {
       showAIEntitlement: false,
       activationCode: '',
       activationLoading: false,
+      showProfileEditor: false,
+      profileNickname: '',
+      profileAvatarPath: '',
+      profileLoading: false,
     }
   },
   computed: {
@@ -490,7 +528,12 @@ export default {
     }
   },
   onShow() {
-    this.loadUser()
+    this.loadUser().then(() => {
+      if (uni.getStorageSync('open_wechat_profile') === '1') {
+        uni.removeStorageSync('open_wechat_profile')
+        this.openProfileEditor()
+      }
+    })
     this.loadLedgers()
     this.loadAccounts()
     this.loadBookkeepingPreference()
@@ -532,7 +575,7 @@ export default {
       })
       // #endif
     },
-    loadUser() {
+    async loadUser() {
       const userStr = uni.getStorageSync(USER_KEY)
       if (userStr) {
         try {
@@ -540,6 +583,76 @@ export default {
         } catch (e) {
           this.user = null
         }
+      }
+      try {
+        const user = await get('/me', {}, { silent: true })
+        this.user = user
+        uni.setStorageSync(USER_KEY, JSON.stringify(user))
+      } catch (err) {
+        // 网络异常时继续使用本地缓存，避免个人页空白。
+      }
+    },
+    avatarSrc(value) {
+      const url = String(value || '')
+      if (!url || /^https?:\/\//.test(url) || url.startsWith('data:') || url.startsWith('wxfile:') || url.startsWith('http://tmp/')) return url
+      return `${BASE_URL}${url}`
+    },
+    userIdentityLabel(user) {
+      return String(user?.username || '').startsWith('wx_') ? '微信用户' : `@${user?.username || ''}`
+    },
+    openProfileEditor() {
+      this.profileNickname = this.user?.nickname === '微信用户' ? '' : (this.user?.nickname || '')
+      this.profileAvatarPath = ''
+      this.showProfileEditor = true
+    },
+    onChooseAvatar(event) {
+      this.profileAvatarPath = event?.detail?.avatarUrl || ''
+    },
+    uploadProfileAvatar(filePath) {
+      return new Promise((resolve, reject) => {
+        uni.uploadFile({
+          url: `${BASE_URL}/api/me/avatar`,
+          filePath,
+          name: 'avatar',
+          header: { Authorization: `Bearer ${uni.getStorageSync(TOKEN_KEY)}` },
+          success: (res) => {
+            let body = res.data
+            try {
+              if (typeof body === 'string') body = JSON.parse(body)
+            } catch (err) {
+              reject(new Error('头像上传返回异常'))
+              return
+            }
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              resolve(body?.data || body)
+              return
+            }
+            reject(new Error(body?.error || '头像上传失败'))
+          },
+          fail: reject
+        })
+      })
+    },
+    async saveProfile() {
+      const nickname = (this.profileNickname || '').trim()
+      if (!nickname) {
+        uni.showToast({ title: '请填写昵称', icon: 'none' })
+        return
+      }
+      this.profileLoading = true
+      try {
+        let user = await put('/me', { nickname })
+        if (this.profileAvatarPath) {
+          user = await this.uploadProfileAvatar(this.profileAvatarPath)
+        }
+        this.user = user
+        uni.setStorageSync(USER_KEY, JSON.stringify(user))
+        this.showProfileEditor = false
+        uni.showToast({ title: '资料已保存', icon: 'success' })
+      } catch (err) {
+        uni.showToast({ title: err.message || '保存失败', icon: 'none' })
+      } finally {
+        this.profileLoading = false
       }
     },
     async loadLedgers() {
@@ -994,6 +1107,7 @@ export default {
   font-weight: 700;
   box-shadow: 0 10px 20px rgba(67,197,158,.2);
 }
+.avatar-image { display: block; }
 .user-info {
   flex: 1;
   display: flex;
@@ -1008,6 +1122,17 @@ export default {
 .username {
   font-size: 13px;
   color: #789087;
+}
+.user-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.profile-link {
+  padding: 5px 8px;
+  color: #299b79;
+  font-size: 11px;
 }
 .logout-link {
   padding: 7px 10px;
@@ -1402,6 +1527,44 @@ export default {
   padding: 12px 0;
   border-bottom: 1px solid #f0f0f0;
 }
+.member-identity { display: flex; align-items: center; gap: 10px; }
+.member-avatar {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.member-avatar-fallback { color: #fff; background: #43c59e; font-size: 14px; }
+.profile-editor-tip {
+  display: block;
+  color: #8a9992;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+.avatar-picker {
+  width: 84px !important;
+  height: 84px;
+  padding: 0;
+  margin: 18px auto;
+  border: 0;
+  border-radius: 26px;
+  overflow: hidden;
+  background: #eaf7f2;
+}
+.avatar-picker::after { border: 0; }
+.profile-avatar-preview, .profile-avatar-placeholder {
+  width: 84px;
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.profile-avatar-placeholder { color: #2cae86; font-size: 13px; }
+.profile-nickname-input { margin-top: 4px; }
 .member-name {
   font-size: 15px;
   margin-right: 8px;

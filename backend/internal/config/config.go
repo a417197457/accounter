@@ -21,6 +21,12 @@ type Config struct {
 	AI      AIConfig
 	WeChat  WeChatConfig
 	Logging LoggingConfig
+	Storage StorageConfig
+}
+
+// StorageConfig controls persistent user-uploaded files.
+type StorageConfig struct {
+	UploadDir string
 }
 
 // LoggingConfig controls the production rotating application log.
@@ -123,6 +129,7 @@ func Load() *Config {
 	v.SetDefault("logging.max_backups", 14)
 	v.SetDefault("logging.max_age_days", 30)
 	v.SetDefault("logging.compress", true)
+	v.SetDefault("storage.upload_dir", "./uploads")
 
 	// 读取配置文件
 	if err := v.ReadInConfig(); err != nil {
@@ -182,6 +189,9 @@ func Load() *Config {
 			MaxAgeDays: v.GetInt("logging.max_age_days"),
 			Compress:   v.GetBool("logging.compress"),
 		},
+		Storage: StorageConfig{
+			UploadDir: v.GetString("storage.upload_dir"),
+		},
 	}
 
 	// ASR 配置回落：如果 ASR 的 base_url 或 api_key 为空，则使用对话模型的配置
@@ -235,6 +245,7 @@ func applyEnvOverrides(v *viper.Viper) {
 		"LOG_MAX_BACKUPS":                "logging.max_backups",
 		"LOG_MAX_AGE_DAYS":               "logging.max_age_days",
 		"LOG_COMPRESS":                   "logging.compress",
+		"UPLOAD_DIR":                     "storage.upload_dir",
 	}
 
 	for envKey, viperKey := range envMap {

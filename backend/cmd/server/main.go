@@ -55,6 +55,10 @@ func main() {
 
 	// CORS 中间件
 	r.Use(middleware.CORS(cfg.Server.AllowedOrigins, cfg.IsDev()))
+	if err := os.MkdirAll(cfg.Storage.UploadDir, 0750); err != nil {
+		log.Fatalf("创建上传目录失败: %v", err)
+	}
+	r.StaticFS("/api/uploads", gin.Dir(cfg.Storage.UploadDir, false))
 
 	// 健康检查端点
 	r.GET("/health", func(c *gin.Context) {
@@ -98,6 +102,8 @@ func main() {
 	{
 		// 当前用户
 		api.GET("/me", authHandler.GetCurrentUser)
+		api.PUT("/me", authHandler.UpdateProfile)
+		api.POST("/me/avatar", authHandler.UploadAvatar)
 
 		// 账本管理（不绑定具体账本）
 		ledgers := api.Group("/ledgers")

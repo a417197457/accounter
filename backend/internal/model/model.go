@@ -16,6 +16,7 @@ type User struct {
 	Username     string         `gorm:"uniqueIndex;size:64;not null" json:"username"`
 	PasswordHash string         `gorm:"size:255;not null" json:"-"`
 	Nickname     string         `gorm:"size:64" json:"nickname"`
+	AvatarURL    string         `gorm:"size:512" json:"avatar_url,omitempty"`
 	Phone        *string        `gorm:"uniqueIndex;size:32" json:"phone,omitempty"`
 	WechatOpenID *string        `gorm:"column:wechat_open_id;uniqueIndex;size:128" json:"-"`
 	CreatedAt    time.Time      `json:"created_at"`

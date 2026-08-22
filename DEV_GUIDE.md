@@ -215,7 +215,7 @@ ai:
 隔离维度：**业务数据（account/category/transaction/budget）按 `ledger_id` 隔离**，不是 user_id。
 
 ```go
-User        { ID, Username(uniq), PasswordHash(json:"-"), Nickname, 软删除 }
+User        { ID, Username(uniq), PasswordHash(json:"-"), Nickname, AvatarURL, 软删除 }
 Ledger      { ID, Name, OwnerID, IsPersonal bool, Type(personal|family|travel|gift), InviteCode(size:16), CreatedAt }   // 账本
 Membership  { ID, LedgerID, UserID, Role(owner|member), Alias, uniqueIndex(ledger,user) } // 成员关系
 Account     { ID, LedgerID, UserID(创建者), Name, Type(alipay|wechat|cash|savings|credit),
@@ -271,6 +271,13 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 - `POST /auth/wechat {code}` → `{token,user}`（微信小程序 openid 登录；首次登录自动注册并创建个人账本）
 - `POST /auth/wechat-phone {code,phone_code}` → `{token,user}`（微信小程序授权手机号登录；首次登录自动注册并创建个人账本）
 - `GET /health` → `{status,ai}`
+
+用户资料（需登录）：
+
+- `GET /me` / `PUT /me {nickname}` → 读取或更新当前用户公开资料
+- `POST /me/avatar`（multipart 字段 `avatar`）→ 上传 JPG/PNG 头像，限制 2MB、最大 4096×4096；文件保存到 `UPLOAD_DIR/avatars`
+
+生产默认 `UPLOAD_DIR=/opt/accounter/uploads`；发布脚本只确保目录权限，不会替换或回滚该目录，避免版本发布时丢失用户头像。
 
 账本管理（需登录）：
 
@@ -498,7 +505,7 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 3. **隐私协议必须前置（代码已实现）**：进入语音模式先 `getPrivacySetting`，未同意则展示用途弹层，并通过 `open-type="agreePrivacyAuthorization"` 授权后再申请麦克风。mp 后台仍要完成「小程序用户隐私保护指引」，声明麦克风、本地存储及服务端语音识别用途。
 4. **内容安全审核**：AI 对话与备注属于用户输入，首版提交前应依据当前类目/审核要求确定微信内容安全 API 或阿里云内容安全方案；若审核反馈要求，优先在后端统一封装，不能把 AppSecret 放前端。
 5. **小程序包体积**：当前构建约 540KB，明显低于主包限制，首版暂不分包。每次发布仍运行微信开发者工具「代码质量/依赖分析」；接近限制后再把非 tabBar 页面迁入分包（tabBar 页面本身必须在主包）。
-6. **微信 openid 登录（当前启用）**：个人主体无手机号快速验证组件权限，登录页调用 `uni.login` 获取一次性 `code`，提交 `POST /auth/wechat {code}`；后端向微信换取可信 `openid`，按 openid 登录或自动注册，并创建个人账本与默认数据。`users.wechat_open_id` 为可空唯一字段。手机号授权接口 `/auth/wechat-phone` 保留供未来主体认证后启用，但当前页面不调用；不得接受前端直接上传的明文手机号作为微信身份依据。H5 本地调试继续保留用户名密码登录。
+6. **微信 openid 登录（当前启用）**：个人主体无手机号快速验证组件权限，登录页调用 `uni.login` 获取一次性 `code`，提交 `POST /auth/wechat {code}`；后端向微信换取可信 `openid`，按 openid 登录或自动注册，并创建个人账本与默认数据。`wx.login` 不会直接返回头像昵称；首次登录后使用 `<button open-type="chooseAvatar">` 与 `<input type="nickname">` 由用户主动选择，再分别调用 `PUT /me` 和 `POST /me/avatar` 保存。`users.wechat_open_id` 为可空唯一字段。手机号授权接口 `/auth/wechat-phone` 保留供未来主体认证后启用，但当前页面不调用；不得接受前端直接上传的明文手机号作为微信身份依据。H5 本地调试继续保留用户名密码登录。
 7. **小程序 storage 有容量限制**：单个 key 上限未明确但总上限约 10MB，不要把大列表（如全量流水）存 storage；用 uni.setStorage 存 token/用户/当前账本即可。
 8. **小程序 request 并发限制**：同时最多 10 个进行中的请求，超出的排队。明细页按月懒加载 + 报表页同时拉多个统计时注意别并发轰炸，`common/request.js` 可加并发控制。
 9. **web-view 业务域名**：如果用 web-view 嵌入 H5 报表页，域名要在 mp 后台「业务域名」配置（与 request 合法域名分开），且域名需备案 + 放校验文件到根目录。

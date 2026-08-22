@@ -17,7 +17,7 @@
       <view class="wechat-login">
         <view class="phone-badge">微</view>
         <text class="wechat-title">使用微信登录</text>
-        <text class="wechat-copy">首次登录会自动创建个人账本，不获取你的手机号。</text>
+        <text class="wechat-copy">首次登录会自动创建个人账本，登录后可选择微信头像和昵称。</text>
         <button
           class="btn btn-primary submit-btn wechat-btn"
           :loading="loading"
@@ -196,7 +196,9 @@ export default {
       uni.setStorageSync(TOKEN_KEY, token)
       uni.setStorageSync(USER_KEY, JSON.stringify(user))
       uni.showToast({ title: message, icon: 'success' })
-      setTimeout(() => uni.switchTab({ url: '/pages/chat/index' }), 500)
+      const needsWechatProfile = String(user?.username || '').startsWith('wx_') && (!user?.avatar_url || user?.nickname === '微信用户')
+      if (needsWechatProfile) uni.setStorageSync('open_wechat_profile', '1')
+      setTimeout(() => uni.switchTab({ url: needsWechatProfile ? '/pages/profile/index' : '/pages/chat/index' }), 500)
     }
   }
 }

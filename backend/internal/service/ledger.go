@@ -140,11 +140,12 @@ func (s *LedgerService) Join(userID uint, inviteCode string) (*model.Ledger, err
 
 // MemberInfo 成员信息
 type MemberInfo struct {
-	UserID   uint   `json:"user_id"`
-	Username string `json:"username"`
-	Nickname string `json:"nickname"`
-	Alias    string `json:"alias"`
-	Role     string `json:"role"`
+	UserID    uint   `json:"user_id"`
+	Username  string `json:"username"`
+	Nickname  string `json:"nickname"`
+	AvatarURL string `json:"avatar_url,omitempty"`
+	Alias     string `json:"alias"`
+	Role      string `json:"role"`
 }
 
 // Members 获取账本成员列表
@@ -160,7 +161,7 @@ func (s *LedgerService) Members(ledgerID uint, requesterID uint) ([]MemberInfo, 
 
 	var members []MemberInfo
 	err := s.db.Table("memberships").
-		Select("users.id as user_id, users.username, users.nickname, memberships.alias, memberships.role").
+		Select("users.id as user_id, users.username, users.nickname, users.avatar_url, memberships.alias, memberships.role").
 		Joins("JOIN users ON users.id = memberships.user_id").
 		Where("memberships.ledger_id = ?", ledgerID).
 		Scan(&members).Error

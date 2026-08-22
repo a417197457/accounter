@@ -6,7 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"accounter/backend/internal/config"
 	"accounter/backend/internal/middleware"
@@ -232,6 +236,69 @@ func (s *AuthService) GetUser(userID uint) (*model.User, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+// UpdateNickname 更新用户公开昵称，成员列表与流水记账人会同步显示。
+func (s *AuthService) UpdateNickname(userID uint, nickname string) (*model.User, error) {
+	nickname = strings.TrimSpace(nickname)
+	if nickname == "" || utf8.RuneCountInString(nickname) > 32 {
+		return nil, errors.New("昵称需要填写且不能超过 32 个字")
+	}
+	if err := s.db.Model(&model.User{}).Where("id = ?", userID).Update("nickname", nickname).Error; err != nil {
+		return nil, fmt.Errorf("更新昵称失败: %w", err)
+	}
+	return s.GetUser(userID)
+}
+
+// UpdateAvatar 将经过校验的头像写入持久目录并更新用户公开头像地址。
+func (s *AuthService) UpdateAvatar(userID uint, uploadDir string, content []byte, extension string) (*model.User, error) {
+	if extension != ".jpg" && extension != ".png" {
+		return nil, errors.New("头像只支持 JPG 或 PNG")
+	}
+	avatarDir := filepath.Join(uploadDir, "avatars")
+	if err := os.MkdirAll(avatarDir, 0750); err != nil {
+		return nil, fmt.Errorf("创建头像目录失败: %w", err)
+	}
+
+	temp, err := os.CreateTemp(avatarDir, fmt.Sprintf(".%d-*", userID))
+	if err != nil {
+		return nil, fmt.Errorf("保存头像失败: %w", err)
+	}
+	tempName := temp.Name()
+	committed := false
+	defer func() {
+		_ = temp.Close()
+		if !committed {
+			_ = os.Remove(tempName)
+		}
+	}()
+	if _, err := temp.Write(content); err != nil {
+		return nil, fmt.Errorf("保存头像失败: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		return nil, fmt.Errorf("保存头像失败: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return nil, fmt.Errorf("保存头像失败: %w", err)
+	}
+
+	filename := fmt.Sprintf("%d%s", userID, extension)
+	finalPath := filepath.Join(avatarDir, filename)
+	if err := os.Rename(tempName, finalPath); err != nil {
+		return nil, fmt.Errorf("保存头像失败: %w", err)
+	}
+	committed = true
+	avatarURL := fmt.Sprintf("/api/uploads/avatars/%s?v=%d", filename, time.Now().UnixNano())
+	if err := s.db.Model(&model.User{}).Where("id = ?", userID).Update("avatar_url", avatarURL).Error; err != nil {
+		return nil, fmt.Errorf("更新头像失败: %w", err)
+	}
+
+	otherExtension := ".jpg"
+	if extension == ".jpg" {
+		otherExtension = ".png"
+	}
+	_ = os.Remove(filepath.Join(avatarDir, fmt.Sprintf("%d%s", userID, otherExtension)))
+	return s.GetUser(userID)
 }
 
 // generateRandomString 生成随机邀请码（复用 model.GenInviteCode，保持 6 位去易混字符）
