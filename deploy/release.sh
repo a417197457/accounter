@@ -166,6 +166,8 @@ fi
   "${REMOTE_STAGE}/accounter" "${CURRENT_BINARY}"
 "${SUDO[@]}" install -o root -g root -m 750 \
   "${REMOTE_STAGE}/accounter-admin" /opt/accounter/bin/accounter-admin
+"${SUDO[@]}" install -d -o root -g root -m 755 /usr/local/bin
+"${SUDO[@]}" ln -sfn /opt/accounter/bin/accounter-admin /usr/local/bin/acli
 "${SUDO[@]}" mv "${NEW_WEB_DIR}" "${CURRENT_WEB_DIR}"
 "${SUDO[@]}" chmod 755 /opt/accounter "${CURRENT_WEB_DIR}"
 "${SUDO[@]}" install -m 644 \

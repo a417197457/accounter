@@ -749,30 +749,30 @@ AI_ACTIVATION_IP_ATTEMPT_LIMIT=30
 
 ### 16.4 管理命令
 
-发布后由 root 在 ECS 使用 `/opt/accounter/bin/accounter-admin`：
+发布后由 root 在 ECS 使用 `acli`（软链接到 `/opt/accounter/bin/accounter-admin`）：
 
 ```bash
 # 查询注册用户总数，以及每个用户的账户数、流水数和收支汇总
-sudo /opt/accounter/bin/accounter-admin ops users --page 1 --page-size 50
+sudo acli ops users --page 1 --page-size 50
 
 # 按用户 ID、月份分页查询账单；默认隐藏备注
-sudo /opt/accounter/bin/accounter-admin ops bills \
+sudo acli ops bills \
   --user-id 12 --month 2026-08 --page 1 --page-size 50
 
 # 确有排查需要时显示备注
-sudo /opt/accounter/bin/accounter-admin ops bills --user-id 12 --show-remark
+sudo acli ops bills --user-id 12 --show-remark
 
 # 生成一批激活码，明文只写入一次且文件权限为 600
-sudo /opt/accounter/bin/accounter-admin activation-code create \
+sudo acli activation-code create \
   --count 20 --batch first-release --expires 2027-01-01 \
   --output /root/qingzhang-first-release.csv
 
 # 查询未兑换、已兑换、已过期或已作废的记录
-sudo /opt/accounter/bin/accounter-admin activation-code list --status unused
-sudo /opt/accounter/bin/accounter-admin activation-code list --status redeemed
+sudo acli activation-code list --status unused
+sudo acli activation-code list --status redeemed
 
 # 作废未兑换的码；已兑换的码不能通过此命令撤销
-sudo /opt/accounter/bin/accounter-admin activation-code revoke --id 123
+sudo acli activation-code revoke --id 123
 ```
 
 `ops` 查询只读生产数据库，只统计个人账本中的原始流水；同步到旅游、礼账本等其他账本的副本不会重复计数。命令不会输出密码、微信 OpenID 等登录凭据，微信登录生成的内部用户名也会隐藏。分页上限为每页 200 条。
