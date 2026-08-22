@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"accounter/backend/internal/middleware"
+	"accounter/backend/internal/observability"
 	"accounter/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +57,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "user_registered", "authenticated_user_id", user.ID, "login_type", "password")
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
@@ -78,6 +80,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "user_login", "authenticated_user_id", user.ID, "login_type", "password")
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
@@ -99,6 +102,7 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "user_login", "authenticated_user_id", user.ID, "login_type", "wechat")
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"token": token, "user": user}})
 }
 
@@ -114,6 +118,7 @@ func (h *AuthHandler) WechatPhoneLogin(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "user_login", "authenticated_user_id", user.ID, "login_type", "wechat_phone")
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"token": token, "user": user}})
 }
 

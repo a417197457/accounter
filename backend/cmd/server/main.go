@@ -9,6 +9,7 @@ import (
 	"accounter/backend/internal/config"
 	"accounter/backend/internal/handler"
 	"accounter/backend/internal/middleware"
+	"accounter/backend/internal/observability"
 	"accounter/backend/internal/repository"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,17 @@ func main() {
 	cfg := config.Load()
 	if err := cfg.ValidateProduction(); err != nil {
 		log.Fatalf("生产配置校验失败: %v", err)
+	}
+	logFile := cfg.Logging.File
+	if logFile == "" && !cfg.IsDev() {
+		logFile = "/opt/accounter/logs/accounter.log"
+	}
+	logCloser, err := observability.Setup(logFile, cfg.Logging.MaxSizeMB, cfg.Logging.MaxBackups, cfg.Logging.MaxAgeDays, cfg.Logging.Compress)
+	if err != nil {
+		log.Fatalf("日志初始化失败: %v", err)
+	}
+	if logCloser != nil {
+		defer logCloser.Close()
 	}
 
 	// 初始化数据库
@@ -35,6 +47,7 @@ func main() {
 
 	// 创建 Gin 引擎
 	r := gin.Default()
+	r.Use(observability.AuditRequests())
 	// 仅信任同机 Nginx，避免公网请求伪造 X-Forwarded-For，同时让激活限流取得真实来源 IP。
 	if err := r.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
 		log.Fatalf("代理配置失败: %v", err)

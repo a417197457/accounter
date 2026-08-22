@@ -22,6 +22,19 @@ PUBLIC_BASE_URL=https://www.qingzhang.top ./deploy/release.sh qingzhang-ecs
 
 脚本会自动识别 ECS 的 amd64/arm64 架构，运行后端测试和静态检查，构建 Go 后端与 H5，上传并替换服务，然后检查 ECS 本机及公网 `/health`。`/etc/accounter/env`、Nginx 和 HTTPS 证书不会被脚本覆盖。上一版会保存在 `/opt/accounter/backups/<发布时间>/`，新版本健康检查失败时自动回滚。
 
+生产日志同时写入 journald 和 `/opt/accounter/logs/accounter.log`。业务写操作会输出 JSON 审计日志，包含用户、账本、路由、结果和请求 ID，但不记录 Token、密码、备注、AI 对话或语音内容。日志默认达到 20MB 自动轮转，最多保留 14 个压缩备份且不超过 30 天；参数可通过 `LOG_*` 环境变量调整。
+
+```bash
+# 实时查看全部生产日志
+sudo tail -f /opt/accounter/logs/accounter.log
+
+# 只看成功创建的手动/AI 记账流水
+sudo grep '"event":"transaction_created"' /opt/accounter/logs/accounter.log
+
+# 查看轮转后的压缩日志
+sudo zgrep '"log_type":"audit"' /opt/accounter/logs/accounter-*.log.gz
+```
+
 首次切换 MySQL 会执行 GORM 自动迁移；正式变更前先做 RDS 快照。详细上线清单见根目录 `DEV_GUIDE.md`。
 
 ## AI 激活码日常管理

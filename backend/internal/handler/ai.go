@@ -7,6 +7,7 @@ import (
 
 	"accounter/backend/internal/ai"
 	"accounter/backend/internal/middleware"
+	"accounter/backend/internal/observability"
 	"accounter/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -192,6 +193,16 @@ func (h *AIHandler) Confirm(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	for _, tx := range txs {
+		observability.Event(c, "transaction_created",
+			"transaction_id", tx.ID,
+			"source", "ai",
+			"op_type", tx.OpType,
+			"amount", tx.Amount.String(),
+			"account_id", tx.AccountID,
+			"occurred_at", tx.OccurredAt.Format("2006-01-02T15:04:05Z07:00"),
+		)
 	}
 
 	// 单笔兼容旧前端：data 仍返回那一笔；多笔附带 items

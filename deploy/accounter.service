@@ -17,7 +17,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/accounter
+ReadWritePaths=/opt/accounter /opt/accounter/logs
 
 [Install]
 WantedBy=multi-user.target

@@ -8,6 +8,7 @@ import (
 
 	"accounter/backend/internal/middleware"
 	"accounter/backend/internal/model"
+	"accounter/backend/internal/observability"
 	"accounter/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -104,6 +105,14 @@ func (h *TransactionHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "transaction_created",
+		"transaction_id", t.ID,
+		"source", "manual",
+		"op_type", t.OpType,
+		"amount", t.Amount.String(),
+		"account_id", t.AccountID,
+		"occurred_at", t.OccurredAt.Format(time.RFC3339),
+	)
 
 	c.JSON(http.StatusOK, gin.H{"data": t})
 }
@@ -147,6 +156,13 @@ func (h *TransactionHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "transaction_updated",
+		"transaction_id", t.ID,
+		"op_type", t.OpType,
+		"amount", t.Amount.String(),
+		"account_id", t.AccountID,
+		"occurred_at", t.OccurredAt.Format(time.RFC3339),
+	)
 
 	c.JSON(http.StatusOK, gin.H{"data": t})
 }
@@ -161,6 +177,7 @@ func (h *TransactionHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "transaction_deleted", "transaction_id", id)
 
 	c.JSON(http.StatusOK, gin.H{"data": "ok"})
 }
@@ -296,6 +313,12 @@ func (h *TransactionHandler) Push(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "transaction_pushed",
+		"source_transaction_id", id,
+		"target_transaction_id", t.ID,
+		"source_ledger_id", srcLedgerID,
+		"target_ledger_id", req.TargetLedgerID,
+	)
 	c.JSON(http.StatusOK, gin.H{"data": t})
 }
 
@@ -321,5 +344,12 @@ func (h *TransactionHandler) PushMonth(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	observability.Event(c, "transaction_month_pushed",
+		"source_ledger_id", srcLedgerID,
+		"target_ledger_id", req.TargetLedgerID,
+		"month", req.Month,
+		"pushed", result.Pushed,
+		"skipped", result.Skipped,
+	)
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }

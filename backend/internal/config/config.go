@@ -14,12 +14,22 @@ import (
 
 // Config 全局配置结构
 type Config struct {
-	Server ServerConfig
-	DB     DBConfig
-	SQLite SQLiteConfig
-	JWT    JWTConfig
-	AI     AIConfig
-	WeChat WeChatConfig
+	Server  ServerConfig
+	DB      DBConfig
+	SQLite  SQLiteConfig
+	JWT     JWTConfig
+	AI      AIConfig
+	WeChat  WeChatConfig
+	Logging LoggingConfig
+}
+
+// LoggingConfig controls the production rotating application log.
+type LoggingConfig struct {
+	File       string
+	MaxSizeMB  int
+	MaxBackups int
+	MaxAgeDays int
+	Compress   bool
 }
 
 // WeChatConfig 微信小程序服务端配置。Secret 只能通过服务端配置或环境变量注入。
@@ -109,6 +119,10 @@ func Load() *Config {
 	v.SetDefault("ai.activation_attempt_limit", 5)
 	v.SetDefault("ai.activation_ip_attempt_limit", 30)
 	v.SetDefault("wechat.api_base", "https://api.weixin.qq.com")
+	v.SetDefault("logging.max_size_mb", 20)
+	v.SetDefault("logging.max_backups", 14)
+	v.SetDefault("logging.max_age_days", 30)
+	v.SetDefault("logging.compress", true)
 
 	// 读取配置文件
 	if err := v.ReadInConfig(); err != nil {
@@ -161,6 +175,13 @@ func Load() *Config {
 			AppSecret: v.GetString("wechat.app_secret"),
 			APIBase:   v.GetString("wechat.api_base"),
 		},
+		Logging: LoggingConfig{
+			File:       v.GetString("logging.file"),
+			MaxSizeMB:  v.GetInt("logging.max_size_mb"),
+			MaxBackups: v.GetInt("logging.max_backups"),
+			MaxAgeDays: v.GetInt("logging.max_age_days"),
+			Compress:   v.GetBool("logging.compress"),
+		},
 	}
 
 	// ASR 配置回落：如果 ASR 的 base_url 或 api_key 为空，则使用对话模型的配置
@@ -209,6 +230,11 @@ func applyEnvOverrides(v *viper.Viper) {
 		"WECHAT_APP_ID":                  "wechat.app_id",
 		"WECHAT_APP_SECRET":              "wechat.app_secret",
 		"WECHAT_API_BASE":                "wechat.api_base",
+		"LOG_FILE":                       "logging.file",
+		"LOG_MAX_SIZE_MB":                "logging.max_size_mb",
+		"LOG_MAX_BACKUPS":                "logging.max_backups",
+		"LOG_MAX_AGE_DAYS":               "logging.max_age_days",
+		"LOG_COMPRESS":                   "logging.compress",
 	}
 
 	for envKey, viperKey := range envMap {
