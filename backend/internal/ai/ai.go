@@ -184,6 +184,7 @@ func (s *Service) buildSystemPrompt(ledgerID uint, preference *service.Bookkeepi
 你能看到多轮对话历史。用户可能先说记账，你追问后，下一句是补充（如「微信」「昨天」）——必须结合历史理解，不要把补充当成全新无关消息。
 
 【单笔】如「今天打车花了30」→ 信息足够时调用 create_transaction。
+【收支判断】“花了/付了/买了”通常是支出；“收了/收到/收款/赚了”通常是收入。例如“打羽毛球收了70球费”是收入，无法匹配更具体的收入分类时使用“其他”。
 【多笔】用户可能说一大段话或念很多条消费，例如：
 「中午点外卖花了35，下午打车22，晚上超市买菜花了58，用的都是支付宝」
 这时必须拆成多条，优先调用 create_transactions（items 数组），也可对 create_transaction 调用多次。
@@ -191,13 +192,14 @@ func (s *Service) buildSystemPrompt(ledgerID uint, preference *service.Bookkeepi
 
 【追问】金额缺失或分类严重不确定、无法合理推断时：本轮只用自然语言简短追问，不要调用 create_transaction / create_transactions。账户是否追问必须严格遵守上面的账户策略。
 【账户】本轮是在回答你刚刚的账户追问时，可以结合紧邻的对话补全；不要沿用更早的无关账单账户。
+用户说“中信信用卡”“招商储蓄卡”这类“账户名 + 账户类型”时，account_name 必须填写账户列表里的实际名称，不要把类型后缀拼进账户名。
 
 字段约定：
 - op_type：支出=expense 收入=income 借入=borrow_in 借出=borrow_out 转账=transfer
 - account_name：从话语与历史推断
 - payment_account_name：仅当明确「支付宝/微信绑某张卡」时填写；account_name 填实际扣款卡
 - account_specified：按上面的当前账户策略如实填写，不得因为系统设置了默认账户就填 true
-- category_name：尽量匹配上面的分类（一级或二级）
+- category_name：非转账必须填写，并尽量匹配上面的分类（一级或二级）；无法精确匹配时填写对应收支类型的“其他”，转账填写空字符串
 - amount：金额字符串
 - occurred_at：YYYY-MM-DD HH:mm:ss；用户没说日期和时间时使用当前时间；只说日期没说几点时，日期按用户描述、时分秒沿用当前时间；明确说了几点时按用户描述填写
 - remark：简短事项，如外卖、打车、买菜
@@ -507,7 +509,8 @@ func (s *Service) parseDraft(ledgerID uint, argsJSON string, preference *service
 		}
 	}
 
-	// 分类映射：按名称（一级或二级）。AI 可能返回 "父类/子类" 格式，取子类名查找
+	// 分类映射：按名称（一级或二级）。AI 可能返回 "父类/子类" 格式，取子类名查找。
+	// 模型漏填或生成了不存在的分类时，统一落到同收支类型的“其他”，避免草稿能确认但保存才失败。
 	if args.CategoryName != "" && args.OpType != "transfer" {
 		catName := args.CategoryName
 		// 支持 "父类/子类" → 取子类名；也支持纯父类名
@@ -531,18 +534,114 @@ func (s *Service) parseDraft(ledgerID uint, argsJSON string, preference *service
 			}
 		}
 	}
+	if args.OpType != "transfer" && draft.CategoryID == nil {
+		categoryKind := categoryKindForOpType(args.OpType)
+		cat := s.findFallbackCategory(ledgerID, categoryKind)
+		if cat == nil {
+			return nil, fmt.Errorf("未找到可用的%s分类，请先创建分类", map[string]string{"income": "收入", "expense": "支出"}[categoryKind])
+		}
+		draft.CategoryID = &cat.ID
+		draft.CategoryName = cat.Name
+	}
 
 	return draft, nil
 }
 
-// findAccountByName 按名称查账户
+// findAccountByName 先精确匹配，再兼容“账户名 + 信用卡/储蓄卡”等口语说法。
 func (s *Service) findAccountByName(ledgerID uint, name string) (model.Account, bool) {
 	var acc model.Account
+	name = strings.TrimSpace(name)
 	if name == "" {
 		return acc, false
 	}
-	err := s.db.Where("ledger_id = ? AND name = ? AND deleted_at IS NULL", ledgerID, name).First(&acc).Error
-	return acc, err == nil
+	if err := s.db.Where("ledger_id = ? AND name = ? AND deleted_at IS NULL", ledgerID, name).First(&acc).Error; err == nil {
+		return acc, true
+	}
+
+	var accounts []model.Account
+	if err := s.db.Where("ledger_id = ? AND deleted_at IS NULL AND is_archived = ?", ledgerID, false).
+		Order("sort asc, id asc").Find(&accounts).Error; err != nil {
+		return acc, false
+	}
+	queryNormalized := normalizeAccountName(name)
+	queryBase := stripAccountTypeWords(queryNormalized)
+	hint := accountTypeHint(queryNormalized)
+	bestScore := 0
+	bestIndex := -1
+	tied := false
+	for i := range accounts {
+		candidateNormalized := normalizeAccountName(accounts[i].Name)
+		candidateBase := stripAccountTypeWords(candidateNormalized)
+		if hint != "" && !accountMatchesTypeHint(accounts[i].Type, hint) {
+			continue
+		}
+		score := 0
+		switch {
+		case queryNormalized == candidateNormalized:
+			score = 100
+		case queryBase != "" && queryBase == candidateBase:
+			score = 90
+		case queryBase != "" && candidateBase != "" && (strings.Contains(queryBase, candidateBase) || strings.Contains(candidateBase, queryBase)):
+			score = 70
+		}
+		if score == 0 {
+			continue
+		}
+		if hint != "" {
+			score += 10
+		}
+		if score > bestScore {
+			bestScore, bestIndex, tied = score, i, false
+		} else if score == bestScore {
+			tied = true
+		}
+	}
+	if bestIndex < 0 || tied {
+		return acc, false
+	}
+	return accounts[bestIndex], true
+}
+
+func normalizeAccountName(name string) string {
+	replacer := strings.NewReplacer(" ", "", "\t", "", "-", "", "_", "", "·", "", "（", "", "）", "", "(", "", ")", "")
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(name)))
+}
+
+func stripAccountTypeWords(name string) string {
+	suffixes := []string{"银行信用卡", "银行储蓄卡", "银行借记卡", "信用卡", "储蓄卡", "借记卡", "银行卡", "账户", "余额", "支付", "银行", "卡"}
+	for {
+		before := name
+		for _, suffix := range suffixes {
+			name = strings.TrimSuffix(name, suffix)
+		}
+		if name == before {
+			return name
+		}
+	}
+}
+
+func accountTypeHint(name string) string {
+	switch {
+	case strings.Contains(name, "信用卡"), strings.Contains(name, "花呗"), strings.Contains(name, "白条"):
+		return "credit"
+	case strings.Contains(name, "储蓄卡"), strings.Contains(name, "借记卡"):
+		return "savings"
+	case strings.Contains(name, "支付宝"):
+		return "alipay"
+	case strings.Contains(name, "微信"):
+		return "wechat"
+	case strings.Contains(name, "现金"):
+		return "cash"
+	default:
+		return ""
+	}
+}
+
+func accountMatchesTypeHint(accountType, hint string) bool {
+	if hint == "savings" {
+		return accountType == "savings" || accountType == "bank"
+	}
+	return accountType == hint
 }
 
 func categoryKindForOpType(opType string) string {
@@ -567,6 +666,23 @@ func (s *Service) findCategoryByName(ledgerID uint, name, kind string) *model.Ca
 		return nil
 	}
 	return &cat
+}
+
+// findFallbackCategory 优先使用同类型的“其他”，没有时使用第一个一级分类。
+func (s *Service) findFallbackCategory(ledgerID uint, kind string) *model.Category {
+	if kind == "" {
+		return nil
+	}
+	var cat model.Category
+	base := s.db.Where("ledger_id = ? AND kind = ? AND deleted_at IS NULL", ledgerID, kind)
+	if err := base.Where("name = ?", "其他").Order("parent_id IS NULL DESC, sort asc, id asc").First(&cat).Error; err == nil {
+		return &cat
+	}
+	if err := s.db.Where("ledger_id = ? AND kind = ? AND parent_id IS NULL AND deleted_at IS NULL", ledgerID, kind).
+		Order("sort asc, id asc").First(&cat).Error; err == nil {
+		return &cat
+	}
+	return nil
 }
 
 // handleQuery 处理查询：调 stats，结果喂回 LLM 生成自然语言回复

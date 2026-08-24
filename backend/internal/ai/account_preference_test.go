@@ -39,6 +39,10 @@ func setupAIAccountPreferenceTest(t *testing.T) (*Service, model.Ledger, model.A
 	if err := db.Create(&cash).Error; err != nil {
 		t.Fatal(err)
 	}
+	expenseOther := model.Category{LedgerID: ledger.ID, UserID: user.ID, Name: "其他", Kind: "expense", Icon: "📦"}
+	if err := db.Create(&expenseOther).Error; err != nil {
+		t.Fatal(err)
+	}
 	return &Service{db: db}, ledger, alipay, cash
 }
 
@@ -94,5 +98,39 @@ func TestParseDraftMatchesIncomeCategoryKind(t *testing.T) {
 	}
 	if draft.CategoryID == nil || *draft.CategoryID != incomeGift.ID {
 		t.Fatalf("income gift category mismatch: %+v", draft)
+	}
+}
+
+func TestParseDraftFallsBackToOtherCategory(t *testing.T) {
+	svc, ledger, alipay, _ := setupAIAccountPreferenceTest(t)
+	other := model.Category{LedgerID: ledger.ID, UserID: ledger.OwnerID, Name: "其他", Kind: "income", Icon: "📦"}
+	if err := svc.db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	pref := &service.BookkeepingPreferenceView{
+		AccountMode: "default", DefaultAccountID: alipay.ID,
+		DefaultAccountName: alipay.Name, DefaultAccountLabel: "支付宝余额",
+	}
+	draft, err := svc.parseDraft(ledger.ID,
+		`{"op_type":"income","amount":"70","account_name":"支付宝","account_specified":false,"remark":"打羽毛球收球费"}`,
+		pref,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.CategoryID == nil || *draft.CategoryID != other.ID || draft.CategoryName != "其他" {
+		t.Fatalf("missing income category should fall back to other: %+v", draft)
+	}
+}
+
+func TestFindAccountByNameAcceptsTypeSuffix(t *testing.T) {
+	svc, ledger, _, _ := setupAIAccountPreferenceTest(t)
+	credit := model.Account{LedgerID: ledger.ID, UserID: ledger.OwnerID, Name: "中信", Type: "credit", Balance: decimal.Zero}
+	if err := svc.db.Create(&credit).Error; err != nil {
+		t.Fatal(err)
+	}
+	matched, ok := svc.findAccountByName(ledger.ID, "中信信用卡")
+	if !ok || matched.ID != credit.ID {
+		t.Fatalf("want 中信 credit account, got ok=%v account=%+v", ok, matched)
 	}
 }

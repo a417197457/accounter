@@ -71,7 +71,7 @@
           <text class="modal-close" @click="closeEditor">×</text>
         </view>
         <text class="field-label">账户名称</text>
-        <input class="editor-input" v-model="form.name" placeholder="如：招商储蓄卡" maxlength="64" />
+        <input class="editor-input" v-model="form.name" :placeholder="accountNamePlaceholder" maxlength="64" />
 
         <text class="field-label">账户类型</text>
         <view class="type-grid">
@@ -88,6 +88,7 @@
         </view>
 
         <view class="credit-panel" v-if="form.type === 'credit'">
+          <text class="field-tip credit-platform-tip">适用于银行信用卡、蚂蚁花呗、京东白条等先消费后还款账户</text>
           <text class="field-label">账单日（使用周期）</text>
           <text class="field-tip">每月几号出账，用于按账期筛选明细，建议 1–28</text>
           <input class="editor-input" type="number" v-model="form.statement_day" placeholder="如 15" maxlength="2" />
@@ -170,8 +171,11 @@ export default {
       return [
         { key: 'payment', title: '支付渠道', copy: '支付宝和微信，可关联银行卡', items: this.accounts.filter(item => item.type === 'alipay' || item.type === 'wechat') },
         { key: 'asset', title: '资产账户', copy: '现金与储蓄卡余额', items: this.accounts.filter(item => item.type === 'cash' || item.type === 'savings' || item.type === 'bank') },
-        { key: 'debt', title: '负债账户', copy: '信用卡余额表示当前欠款', items: this.accounts.filter(item => item.type === 'credit') }
+        { key: 'debt', title: '负债账户', copy: '支持信用卡、蚂蚁花呗、京东白条等，余额表示当前欠款', items: this.accounts.filter(item => item.type === 'credit') }
       ]
+    },
+    accountNamePlaceholder() {
+      return this.form.type === 'credit' ? '如：中信、蚂蚁花呗、京东白条' : '如：招商储蓄卡'
     },
     linkCandidates() {
       return this.accounts.filter(item => !item.is_archived && (item.type === 'savings' || item.type === 'credit'))
@@ -276,7 +280,7 @@ export default {
 </script>
 
 <style scoped>
-.page { min-height: 100vh; padding: 22px 16px 110px; background: #f7f9f7; box-sizing: border-box; }
+.page { min-height: 100vh; padding: 22px 16px 38px; background: #f7f9f7; box-sizing: border-box; }
 .page-head { padding: 0 4px 20px; }
 .back-row {
   display: inline-flex;
@@ -310,11 +314,12 @@ export default {
 .account-side { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }.money { color: #31564c; font-size: 11px; font-variant-numeric: tabular-nums; }.money.debt { color: #e56258; }.edit-link { color: #36b88f; font-size: 12px; }
 .empty-row { padding: 22px; color: #a4afaa; background: #fff; border-radius: 16px; text-align: center; font-size: 12px; }
 .add-button {
-  position: fixed; z-index: 20; left: 16px; right: 16px; bottom: calc(20px + env(safe-area-inset-bottom));
+  width: 100%; margin-top: 8px;
   height: 50px; display: flex; align-items: center; justify-content: center;
   color: #fff; background: #42c39c; border-radius: 16px; box-shadow: 0 10px 24px rgba(66,195,156,.24);
   font-size: 15px; font-weight: 600;
 }
+.credit-platform-tip { margin-top: 10px; color: #52756a; line-height: 1.55; }
 .modal { position: fixed; inset: 0; z-index: 999; padding: 20px; display: flex; align-items: center; justify-content: center; background: rgba(24,49,43,.34); box-sizing: border-box; }
 .modal-content { width: 100%; max-width: 430px; max-height: 82vh; padding: 22px; overflow-y: auto; background: #fff; border-radius: 22px; box-sizing: border-box; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }.modal-title { color: #18312b; font-size: 18px; font-weight: 700; }.modal-close { color: #92a19b; font-size: 25px; }
@@ -326,5 +331,5 @@ export default {
 .credit-panel,.link-panel { margin-top: 14px; padding: 2px 13px 10px; background: #f7faf8; border-radius: 14px; }
 .link-row { min-height: 42px; display: flex; align-items: center; gap: 9px; color: #526860; border-bottom: 1px solid #e8eeeb; font-size: 12px; }.check { width: 19px; height: 19px; display: flex; align-items: center; justify-content: center; color: #fff; background: #dce6e2; border-radius: 6px; }.link-row.selected .check { background: #42c39c; }.link-type { margin-left: auto; color: #92a19b; }
 .danger-row { margin-top: 17px; display: flex; justify-content: space-between; color: #71817a; font-size: 12px; }.danger-row .danger { color: #f06f64; }.modal-actions { margin-top: 18px; display: flex; gap: 10px; }.modal-actions .btn { flex: 1; width: auto !important; margin: 0; }
-@media (min-width: 900px) { .page { max-width: 760px !important; }.summary-grid { grid-template-columns: repeat(3,1fr); }.summary-card.net { grid-column: auto; }.add-button { position: static; width: 100%; margin-top: 8px; } }
+@media (min-width: 900px) { .page { max-width: 760px !important; }.summary-grid { grid-template-columns: repeat(3,1fr); }.summary-card.net { grid-column: auto; } }
 </style>

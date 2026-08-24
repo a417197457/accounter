@@ -46,7 +46,7 @@ var transactionItemProps = map[string]any{
 var toolSchemaCreate = map[string]any{
 	"type":       "object",
 	"properties": transactionItemProps,
-	"required":   []string{"op_type", "amount", "account_name", "account_specified"},
+	"required":   []string{"op_type", "amount", "account_name", "account_specified", "category_name"},
 }
 
 var toolSchemaCreateBatch = map[string]any{
@@ -58,7 +58,7 @@ var toolSchemaCreateBatch = map[string]any{
 			"items": map[string]any{
 				"type":       "object",
 				"properties": transactionItemProps,
-				"required":   []string{"op_type", "amount", "account_name", "account_specified"},
+				"required":   []string{"op_type", "amount", "account_name", "account_specified", "category_name"},
 			},
 		},
 	},

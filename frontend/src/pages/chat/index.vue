@@ -27,11 +27,11 @@
         </view>
       </view>
       <view class="msg" v-for="(m, i) in messages" :key="i" :class="m.role">
-        <text class="msg-text" v-if="m.role === 'user'">{{ m.text }}</text>
+        <text class="msg-text" v-if="m.role === 'user'" selectable user-select @longpress.stop="copyMessage(m.text)">{{ m.text }}</text>
         <view class="msg-ai" v-else>
           <view class="ai-line">
             <image class="ai-avatar" src="/static/brand/zhangxiaoya-duck-app-icon.png" mode="aspectFill" />
-            <text class="msg-text">{{ m.text }}</text>
+            <text class="msg-text" selectable user-select @longpress.stop="copyMessage(m.text)">{{ m.text }}</text>
           </view>
           <view class="warn-banner" v-if="m.warnings && m.warnings.length">
             <text v-for="(w, wi) in m.warnings" :key="wi" class="warn-line">{{ w }}</text>
@@ -306,6 +306,14 @@ export default {
     }
   },
   methods: {
+    copyMessage(value) {
+      const content = String(value || '').trim()
+      if (!content) return
+      uni.setClipboardData({
+        data: content,
+        success: () => uni.showToast({ title: '已复制', icon: 'success' })
+      })
+    },
     async loadAIEntitlement() {
       if (this.entitlementLoading) return
       this.entitlementLoading = true

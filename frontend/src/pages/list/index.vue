@@ -406,6 +406,9 @@ export default {
     },
     showTxActions(tx) {
       const itemList = [tx.source_id ? '从本账本移除' : '删除原流水']
+      if (!tx.source_id && !this.isSharedLedger) {
+        itemList.unshift('编辑流水')
+      }
       if (!tx.source_id && this.targetLedgers.length > 0 && (tx.op_type === 'expense' || tx.op_type === 'income')) {
         itemList.unshift('同步到账本')
       }
@@ -421,11 +424,17 @@ export default {
             } else {
               this.showPush = true
             }
+          } else if (action === '编辑流水') {
+            this.editTx(tx)
           } else {
             this.deleteTx(tx)
           }
         }
       })
+    },
+    editTx(tx) {
+      uni.setStorageSync('edit_transaction', tx)
+      uni.switchTab({ url: '/pages/record/index' })
     },
     async deleteTx(tx) {
       uni.showModal({

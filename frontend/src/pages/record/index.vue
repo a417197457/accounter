@@ -3,14 +3,19 @@
     <WebSidebar />
     <view class="record-head">
       <text class="eyebrow">PERSONAL LEDGER</text>
-      <text class="title">记一笔</text>
-      <text class="subtitle">记录会默认保存到个人账本</text>
+      <text class="title">{{ editingID ? '编辑流水' : '记一笔' }}</text>
+      <text class="subtitle">{{ editingID ? '修改原流水后，已同步的副本也会更新' : '记录会默认保存到个人账本' }}</text>
     </view>
 
     <view class="type-switch">
       <view class="type-option" :class="{ active: form.op_type === 'expense' }" @tap="switchOpType('expense')">支出</view>
       <view class="type-option" :class="{ active: form.op_type === 'income' }" @tap="switchOpType('income')">收入</view>
       <view class="type-option" :class="{ active: form.op_type === 'transfer' }" @tap="switchOpType('transfer')">转账/还款</view>
+      <view
+        class="type-option"
+        v-if="editingID && (form.op_type === 'borrow_in' || form.op_type === 'borrow_out')"
+        :class="{ active: true }"
+      >{{ form.op_type === 'borrow_in' ? '借入' : '借出' }}</view>
     </view>
 
     <view class="amount-panel">
@@ -54,6 +59,16 @@
           </view>
         </picker>
       </view>
+      <view class="detail-row">
+        <view class="detail-icon amber"><image src="/static/ui/calendar.svg" mode="aspectFit" /></view>
+        <text class="detail-label">时间</text>
+        <picker class="detail-picker" mode="time" :value="form.time" @change="onTimeChange">
+          <view class="picker-inner">
+            <text class="detail-value">{{ form.time }}</text>
+            <text class="chevron">›</text>
+          </view>
+        </picker>
+      </view>
       <view class="detail-row last">
         <view class="detail-icon gray"><image src="/static/ui/note.svg" mode="aspectFit" /></view>
         <text class="detail-label">备注</text>
@@ -68,7 +83,8 @@
       </view>
     </view>
 
-    <button class="btn btn-primary submit-btn" @click="handleSubmit" :loading="loading">保存记录</button>
+    <button class="btn btn-primary submit-btn" @click="handleSubmit" :loading="loading">{{ editingID ? '保存修改' : '保存记录' }}</button>
+    <button class="btn btn-secondary cancel-edit-btn" v-if="editingID" @click="cancelEditing">取消编辑</button>
 
     <view class="modal" v-if="showAccount" @tap="showAccount = false">
       <view class="modal-content" @tap.stop>
@@ -156,23 +172,36 @@
 </template>
 
 <script>
-import { get, post } from '../../common/request.js'
+import { get, post, put } from '../../common/request.js'
 import { checkLogin } from '../../common/auth.js'
 import { accountMoneyText } from '../../common/money.js'
+
+const EDIT_TRANSACTION_KEY = 'edit_transaction'
+
+function currentTime() {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+}
+
+function emptyForm() {
+  return {
+    account_id: null,
+    payment_account_id: null,
+    to_account_id: null,
+    category_id: null,
+    op_type: 'expense',
+    amount: '',
+    remark: '',
+    date: new Date().toISOString().split('T')[0],
+    time: currentTime()
+  }
+}
 
 export default {
   data() {
     return {
-      form: {
-        account_id: null,
-        payment_account_id: null,
-        to_account_id: null,
-        category_id: null,
-        op_type: 'expense',
-        amount: '',
-        remark: '',
-        date: new Date().toISOString().split('T')[0]
-      },
+      form: emptyForm(),
+      editingID: null,
       loading: false,
       selectedAccount: null,
       selectedPaymentAccount: null,
@@ -236,8 +265,11 @@ export default {
   onLoad() {
     checkLogin()
   },
-  onShow() {
-    this.loadData()
+  async onShow() {
+    const editTransaction = uni.getStorageSync(EDIT_TRANSACTION_KEY)
+    if (editTransaction) uni.removeStorageSync(EDIT_TRANSACTION_KEY)
+    await this.loadData()
+    if (editTransaction) this.startEditing(editTransaction)
     this.$nextTick(() => setTimeout(() => this.fixInputHeight(), 100))
   },
   methods: {
@@ -248,7 +280,7 @@ export default {
     switchOpType(type) {
       if (this.form.op_type === type) return
       this.form.op_type = type
-      this.tab = type
+      this.tab = type === 'borrow_in' ? 'income' : (type === 'borrow_out' ? 'expense' : type)
       this.selectedCategory = null
       this.selectedParent = null
       this.form.category_id = null
@@ -344,11 +376,59 @@ export default {
       this.selectedCategory = cat
       this.selectedParent = parent
       this.form.category_id = cat.id
-      this.form.op_type = cat.kind || parent?.kind || this.tab
+      const kind = cat.kind || parent?.kind || this.tab
+      const currentKind = this.form.op_type === 'borrow_in' ? 'income' : (this.form.op_type === 'borrow_out' ? 'expense' : this.form.op_type)
+      if (kind !== currentKind || this.form.op_type === 'transfer') this.form.op_type = kind
       this.showCategory = false
     },
     onDateChange(e) {
       this.form.date = e.detail.value
+    },
+    onTimeChange(e) {
+      this.form.time = e.detail.value
+    },
+    findCategorySelection(id) {
+      for (const kind of ['expense', 'income']) {
+        for (const parent of this.categories[kind] || []) {
+          if (parent.id === id) return { category: parent, parent: null }
+          const child = (parent.children || []).find(item => item.id === id)
+          if (child) return { category: child, parent }
+        }
+      }
+      return null
+    },
+    startEditing(tx) {
+      if (!tx?.id || tx.source_id) return
+      this.editingID = tx.id
+      const occurredAt = String(tx.occurred_at || '')
+      this.form = {
+        account_id: tx.account_id,
+        payment_account_id: tx.payment_account_id || null,
+        to_account_id: tx.to_account_id || null,
+        category_id: tx.category_id || null,
+        op_type: tx.op_type,
+        amount: String(tx.amount || ''),
+        remark: tx.remark || '',
+        date: occurredAt.slice(0, 10) || new Date().toISOString().split('T')[0],
+        time: occurredAt.length >= 16 ? occurredAt.slice(11, 16) : '12:00'
+      }
+      this.tab = tx.op_type === 'borrow_in' ? 'income' : (tx.op_type === 'borrow_out' ? 'expense' : tx.op_type)
+      this.selectedAccount = this.accounts.find(item => item.id === tx.account_id) || tx.account || null
+      this.selectedPaymentAccount = this.accounts.find(item => item.id === tx.payment_account_id) || tx.payment_account || null
+      this.selectedTargetAccount = this.accounts.find(item => item.id === tx.to_account_id) || tx.to_account || null
+      const categorySelection = this.findCategorySelection(tx.category_id)
+      this.selectedCategory = categorySelection?.category || tx.category || null
+      this.selectedParent = categorySelection?.parent || tx.category?.parent || null
+    },
+    cancelEditing() {
+      this.editingID = null
+      this.form = emptyForm()
+      this.selectedAccount = null
+      this.selectedPaymentAccount = null
+      this.selectedCategory = null
+      this.selectedParent = null
+      this.selectedTargetAccount = null
+      uni.switchTab({ url: '/pages/list/index' })
     },
     async handleSubmit() {
       if (!this.form.account_id) {
@@ -370,7 +450,7 @@ export default {
 
       this.loading = true
       try {
-        await post('/transactions', {
+        const payload = {
           account_id: this.form.account_id,
           payment_account_id: this.form.payment_account_id || undefined,
           to_account_id: this.form.op_type === 'transfer' ? this.form.to_account_id : undefined,
@@ -378,9 +458,12 @@ export default {
           op_type: this.form.op_type,
           amount: this.form.amount,
           remark: this.form.remark,
-          occurred_at: this.form.date + ' 12:00:00'
-        })
-        uni.showToast({ title: '记账成功', icon: 'success' })
+          occurred_at: `${this.form.date} ${this.form.time || '12:00'}:00`
+        }
+        if (this.editingID) await put(`/transactions/${this.editingID}`, payload)
+        else await post('/transactions', payload)
+        uni.showToast({ title: this.editingID ? '修改成功' : '记账成功', icon: 'success' })
+        this.editingID = null
         this.form.amount = ''
         this.form.remark = ''
         setTimeout(() => {
@@ -576,6 +659,7 @@ export default {
   justify-content: center;
   line-height: 1.4 !important;
 }
+.cancel-edit-btn { width: 100% !important; min-height: 46px; margin-top: 10px; border-radius: 15px; font-size: 14px; }
 .modal {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
