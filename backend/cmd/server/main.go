@@ -11,6 +11,7 @@ import (
 	"accounter/backend/internal/middleware"
 	"accounter/backend/internal/observability"
 	"accounter/backend/internal/repository"
+	"accounter/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,6 +37,11 @@ func main() {
 	// 初始化数据库
 	if _, err := repository.NewDB(cfg); err != nil {
 		log.Fatalf("数据库初始化失败: %v", err)
+	}
+	if repaired, err := service.NewTransactionService().RepairSyncedPaymentRoutes(); err != nil {
+		log.Printf("警告: 修复存量同步流水支付方式失败: %v", err)
+	} else if repaired > 0 {
+		log.Printf("已修复 %d 条同步流水的支付方式", repaired)
 	}
 
 	// 设置 Gin 模式

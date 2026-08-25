@@ -456,7 +456,8 @@ func (s *TransactionService) ListMonths(ledgerID uint) ([]TransactionMonth, erro
 	return result, nil
 }
 
-// mapAccountToLedger 按名称映射账户到目标账本；找不到则用第一个未归档账户
+// mapAccountToLedger 优先按名称和类型映射账户；同名不存在时退回同类型账户，
+// 避免信用卡等资金账户被错误映射成排序靠前的支付宝或微信账户。
 func (s *TransactionService) mapAccountToLedger(srcAccountID, targetLedgerID uint) (uint, error) {
 	var src model.Account
 	if err := s.db.First(&src, srcAccountID).Error; err != nil {
@@ -464,7 +465,15 @@ func (s *TransactionService) mapAccountToLedger(srcAccountID, targetLedgerID uin
 	}
 
 	var target model.Account
-	err := s.db.Where("ledger_id = ? AND name = ? AND deleted_at IS NULL", targetLedgerID, src.Name).
+	err := s.db.Where("ledger_id = ? AND name = ? AND type = ? AND is_archived = ? AND deleted_at IS NULL",
+		targetLedgerID, src.Name, src.Type, false).
+		Order("sort asc, id asc").First(&target).Error
+	if err == nil {
+		return target.ID, nil
+	}
+
+	err = s.db.Where("ledger_id = ? AND type = ? AND is_archived = ? AND deleted_at IS NULL",
+		targetLedgerID, src.Type, false).
 		Order("sort asc, id asc").First(&target).Error
 	if err == nil {
 		return target.ID, nil
@@ -476,6 +485,77 @@ func (s *TransactionService) mapAccountToLedger(srcAccountID, targetLedgerID uin
 		return 0, errors.New("目标账本没有可用账户")
 	}
 	return target.ID, nil
+}
+
+// mapPaymentAccountToLedger 将支付宝/微信支付渠道独立映射到目标账本。
+// 支付渠道不能使用普通账户兜底，否则展示出来的支付方式会与源流水不一致。
+func (s *TransactionService) mapPaymentAccountToLedger(srcPaymentAccountID *uint, targetLedgerID uint) (*uint, error) {
+	if srcPaymentAccountID == nil {
+		return nil, nil
+	}
+
+	var src model.Account
+	if err := s.db.First(&src, *srcPaymentAccountID).Error; err != nil {
+		return nil, errors.New("源支付渠道不存在")
+	}
+	if src.Type != "alipay" && src.Type != "wechat" {
+		return nil, errors.New("源支付渠道类型无效")
+	}
+
+	var target model.Account
+	err := s.db.Where("ledger_id = ? AND name = ? AND type = ? AND is_archived = ? AND deleted_at IS NULL",
+		targetLedgerID, src.Name, src.Type, false).
+		Order("sort asc, id asc").First(&target).Error
+	if err != nil {
+		err = s.db.Where("ledger_id = ? AND type = ? AND is_archived = ? AND deleted_at IS NULL",
+			targetLedgerID, src.Type, false).
+			Order("sort asc, id asc").First(&target).Error
+	}
+	if err != nil {
+		return nil, fmt.Errorf("目标账本没有可用的%s支付渠道", src.Name)
+	}
+	targetID := target.ID
+	return &targetID, nil
+}
+
+// ensurePaymentRoute 确保目标账本存在“支付渠道 → 资金账户”的关联，
+// 使同步副本能够通过与普通流水一致的数据校验。
+func (s *TransactionService) ensurePaymentRoute(ledgerID, fundingAccountID uint, paymentAccountID *uint) error {
+	if paymentAccountID == nil {
+		return nil
+	}
+	var funding model.Account
+	if err := s.db.First(&funding, "id = ? AND ledger_id = ?", fundingAccountID, ledgerID).Error; err != nil {
+		return errors.New("目标资金账户不存在")
+	}
+	if funding.Type != "savings" && funding.Type != "credit" {
+		return errors.New("支付渠道只能关联目标账本的储蓄卡或信用卡")
+	}
+	link := model.AccountLink{
+		LedgerID: ledgerID, PaymentAccountID: *paymentAccountID, FundingAccountID: fundingAccountID,
+	}
+	if err := s.db.Where(
+		"ledger_id = ? AND payment_account_id = ? AND funding_account_id = ?",
+		ledgerID, *paymentAccountID, fundingAccountID,
+	).FirstOrCreate(&link).Error; err != nil {
+		return fmt.Errorf("同步支付渠道关联失败: %w", err)
+	}
+	return nil
+}
+
+func (s *TransactionService) mapTransactionAccountsToLedger(src *model.Transaction, targetLedgerID uint) (uint, *uint, error) {
+	accountID, err := s.mapAccountToLedger(src.AccountID, targetLedgerID)
+	if err != nil {
+		return 0, nil, err
+	}
+	paymentAccountID, err := s.mapPaymentAccountToLedger(src.PaymentAccountID, targetLedgerID)
+	if err != nil {
+		return 0, nil, err
+	}
+	if err := s.ensurePaymentRoute(targetLedgerID, accountID, paymentAccountID); err != nil {
+		return 0, nil, err
+	}
+	return accountID, paymentAccountID, nil
 }
 
 // mapCategoryToLedger 按名称映射分类；找不到则落到同 kind 的「其他」或第一个一级分类
@@ -560,7 +640,7 @@ func (s *TransactionService) PushToLedger(srcLedgerID, srcID, targetLedgerID, us
 		return nil, errAlreadyPushed
 	}
 
-	accountID, err := s.mapAccountToLedger(src.AccountID, targetLedgerID)
+	accountID, paymentAccountID, err := s.mapTransactionAccountsToLedger(&src, targetLedgerID)
 	if err != nil {
 		return nil, err
 	}
@@ -571,13 +651,14 @@ func (s *TransactionService) PushToLedger(srcLedgerID, srcID, targetLedgerID, us
 
 	srcIDCopy := src.ID
 	copyTx := &model.Transaction{
-		AccountID:  accountID,
-		CategoryID: categoryID,
-		OpType:     src.OpType,
-		Amount:     src.Amount,
-		Remark:     src.Remark,
-		OccurredAt: src.OccurredAt,
-		SourceID:   &srcIDCopy,
+		AccountID:        accountID,
+		PaymentAccountID: paymentAccountID,
+		CategoryID:       categoryID,
+		OpType:           src.OpType,
+		Amount:           src.Amount,
+		Remark:           src.Remark,
+		OccurredAt:       src.OccurredAt,
+		SourceID:         &srcIDCopy,
 	}
 
 	return s.createInternal(targetLedgerID, userID, copyTx)
@@ -671,7 +752,7 @@ func (s *TransactionService) syncCopies(src *model.Transaction) error {
 
 	for i := range copies {
 		copy := copies[i]
-		accountID, err := s.mapAccountToLedger(src.AccountID, copy.LedgerID)
+		accountID, paymentAccountID, err := s.mapTransactionAccountsToLedger(src, copy.LedgerID)
 		if err != nil {
 			continue
 		}
@@ -691,7 +772,7 @@ func (s *TransactionService) syncCopies(src *model.Transaction) error {
 			copy.Remark = src.Remark
 			copy.OccurredAt = src.OccurredAt
 			copy.ToAccountID = nil
-			copy.PaymentAccountID = nil
+			copy.PaymentAccountID = paymentAccountID
 			if err := tx.Save(&copy).Error; err != nil {
 				return err
 			}
@@ -699,6 +780,68 @@ func (s *TransactionService) syncCopies(src *model.Transaction) error {
 		})
 	}
 	return nil
+}
+
+// RepairSyncedPaymentRoutes 修复旧版本同步副本中丢失的支付渠道，
+// 同时把曾经回退到错误类型的资金账户重新映射，并保持目标账户余额正确。
+// 该操作幂等，可在服务启动时安全执行。
+func (s *TransactionService) RepairSyncedPaymentRoutes() (int, error) {
+	var copies []model.Transaction
+	if err := s.db.Where("source_id IS NOT NULL").Find(&copies).Error; err != nil {
+		return 0, fmt.Errorf("查询同步副本失败: %w", err)
+	}
+
+	repaired := 0
+	var firstErr error
+	for i := range copies {
+		copyTx := copies[i]
+		if copyTx.SourceID == nil {
+			continue
+		}
+		var source model.Transaction
+		if err := s.db.First(&source, *copyTx.SourceID).Error; err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("读取同步副本 %d 的源流水失败: %w", copyTx.ID, err)
+			}
+			continue
+		}
+
+		accountID, paymentAccountID, err := s.mapTransactionAccountsToLedger(&source, copyTx.LedgerID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("映射同步副本 %d 的支付方式失败: %w", copyTx.ID, err)
+			}
+			continue
+		}
+		paymentUnchanged := (copyTx.PaymentAccountID == nil && paymentAccountID == nil) ||
+			(copyTx.PaymentAccountID != nil && paymentAccountID != nil && *copyTx.PaymentAccountID == *paymentAccountID)
+		if copyTx.AccountID == accountID && paymentUnchanged {
+			continue
+		}
+
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			if err := s.applyBalance(tx, &copyTx, -1); err != nil {
+				return err
+			}
+			copyTx.AccountID = accountID
+			copyTx.PaymentAccountID = paymentAccountID
+			if err := tx.Model(&copyTx).Updates(map[string]interface{}{
+				"account_id":         accountID,
+				"payment_account_id": paymentAccountID,
+			}).Error; err != nil {
+				return fmt.Errorf("更新同步副本支付方式失败: %w", err)
+			}
+			return s.applyBalance(tx, &copyTx, 1)
+		})
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("修复同步副本 %d 失败: %w", copyTx.ID, err)
+			}
+			continue
+		}
+		repaired++
+	}
+	return repaired, firstErr
 }
 
 // deleteCopiesInTx 源流水删除后在同一事务中级联删除并冲回所有副本余额。

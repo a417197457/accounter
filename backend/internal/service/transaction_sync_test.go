@@ -153,6 +153,133 @@ func TestBatchPushAndDeleteTransactions(t *testing.T) {
 	}
 }
 
+func TestPushAndSourceUpdatePreservePaymentRoute(t *testing.T) {
+	db, err := repository.NewDB(&config.Config{
+		DB:     config.DBConfig{Driver: "sqlite"},
+		SQLite: config.SQLiteConfig{Path: "file:transaction_payment_sync_test?mode=memory&cache=shared"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{Username: "t_payment_sync", PasswordHash: "x", Nickname: "支付方式同步测试"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	personal := createSyncTestLedger(t, db, user.ID, "个人", model.LedgerTypePersonal)
+	travel := createSyncTestLedger(t, db, user.ID, "旅行", model.LedgerTypeTravel)
+
+	sourcePayment := model.Account{LedgerID: personal.ID, UserID: user.ID, Name: "微信", Type: "wechat"}
+	sourceFunding := model.Account{LedgerID: personal.ID, UserID: user.ID, Name: "中信信用卡", Type: "credit"}
+	targetCash := model.Account{LedgerID: travel.ID, UserID: user.ID, Name: "现金", Type: "cash", Sort: 1}
+	targetPayment := model.Account{LedgerID: travel.ID, UserID: user.ID, Name: "微信", Type: "wechat", Sort: 2}
+	targetFunding := model.Account{LedgerID: travel.ID, UserID: user.ID, Name: "信用卡", Type: "credit", Sort: 3}
+	for _, account := range []*model.Account{&sourcePayment, &sourceFunding, &targetCash, &targetPayment, &targetFunding} {
+		if err := db.Create(account).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Create(&model.AccountLink{
+		LedgerID: personal.ID, PaymentAccountID: sourcePayment.ID, FundingAccountID: sourceFunding.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sourceCategory := model.Category{LedgerID: personal.ID, UserID: user.ID, Name: "餐饮", Kind: "expense"}
+	targetCategory := model.Category{LedgerID: travel.ID, UserID: user.ID, Name: "餐饮", Kind: "expense"}
+	if err := db.Create(&sourceCategory).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&targetCategory).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	txSvc := &TransactionService{db: db}
+	sourcePaymentID := sourcePayment.ID
+	source, err := txSvc.Create(personal.ID, user.ID, &model.Transaction{
+		AccountID: sourceFunding.ID, PaymentAccountID: &sourcePaymentID, CategoryID: &sourceCategory.ID,
+		OpType: "expense", Amount: decimal.NewFromInt(70), Remark: "微信绑定信用卡支付", OccurredAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	copyTx, err := txSvc.PushToLedger(personal.ID, source.ID, travel.ID, user.ID)
+	if err != nil {
+		t.Fatalf("push transaction: %v", err)
+	}
+	if copyTx.AccountID != targetFunding.ID {
+		t.Fatalf("funding account=%d, want target credit account %d", copyTx.AccountID, targetFunding.ID)
+	}
+	if copyTx.PaymentAccountID == nil || *copyTx.PaymentAccountID != targetPayment.ID {
+		t.Fatalf("payment account=%v, want target wechat account %d", copyTx.PaymentAccountID, targetPayment.ID)
+	}
+	var linkCount int64
+	if err := db.Model(&model.AccountLink{}).Where(
+		"ledger_id = ? AND payment_account_id = ? AND funding_account_id = ?",
+		travel.ID, targetPayment.ID, targetFunding.ID,
+	).Count(&linkCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if linkCount != 1 {
+		t.Fatalf("target payment route should be created, count=%d", linkCount)
+	}
+
+	// 模拟旧版本已经生成的错误副本：支付渠道丢失，信用卡误落到排序第一的现金账户。
+	if err := db.Model(&model.Transaction{}).Where("id = ?", copyTx.ID).Updates(map[string]interface{}{
+		"account_id": targetCash.ID, "payment_account_id": nil,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Account{}).Where("id = ?", targetFunding.ID).Update("balance", decimal.Zero).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Account{}).Where("id = ?", targetCash.ID).Update("balance", decimal.NewFromInt(-70)).Error; err != nil {
+		t.Fatal(err)
+	}
+	repaired, err := txSvc.RepairSyncedPaymentRoutes()
+	if err != nil {
+		t.Fatalf("repair legacy copy: %v", err)
+	}
+	if repaired != 1 {
+		t.Fatalf("repaired=%d, want 1", repaired)
+	}
+	var repairedCopy model.Transaction
+	if err := db.First(&repairedCopy, copyTx.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if repairedCopy.AccountID != targetFunding.ID || repairedCopy.PaymentAccountID == nil || *repairedCopy.PaymentAccountID != targetPayment.ID {
+		t.Fatalf("legacy copy was not repaired: account=%d payment=%v", repairedCopy.AccountID, repairedCopy.PaymentAccountID)
+	}
+	var repairedCash, repairedCredit model.Account
+	if err := db.First(&repairedCash, targetCash.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&repairedCredit, targetFunding.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !repairedCash.Balance.IsZero() || !repairedCredit.Balance.Equal(decimal.NewFromInt(70)) {
+		t.Fatalf("repair balances cash=%s credit=%s", repairedCash.Balance, repairedCredit.Balance)
+	}
+
+	// 修改源流水后，副本仍应保留目标账本中的支付渠道映射。
+	updated, err := txSvc.Update(personal.ID, user.ID, source.ID, &model.Transaction{
+		AccountID: sourceFunding.ID, PaymentAccountID: &sourcePaymentID, CategoryID: &sourceCategory.ID,
+		OpType: "expense", Amount: decimal.NewFromInt(88), Remark: "修改后仍用微信支付", OccurredAt: source.OccurredAt,
+	})
+	if err != nil {
+		t.Fatalf("update source transaction: %v", err)
+	}
+	if updated.PaymentAccountID == nil {
+		t.Fatal("source payment account unexpectedly cleared")
+	}
+	var refreshedCopy model.Transaction
+	if err := db.First(&refreshedCopy, copyTx.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshedCopy.AccountID != targetFunding.ID || refreshedCopy.PaymentAccountID == nil || *refreshedCopy.PaymentAccountID != targetPayment.ID {
+		t.Fatalf("updated copy lost payment route: account=%d payment=%v", refreshedCopy.AccountID, refreshedCopy.PaymentAccountID)
+	}
+}
+
 func createSyncTestLedger(t *testing.T, db *gorm.DB, userID uint, name, ledgerType string) model.Ledger {
 	t.Helper()
 	ledger := model.Ledger{
