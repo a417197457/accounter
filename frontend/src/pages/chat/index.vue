@@ -59,8 +59,9 @@
               </view>
               <view class="draft-detail" v-if="d.remark"><text>备注：{{ d.remark }}</text></view>
               <view class="draft-actions" v-if="draftStatus(m, di) === 'pending'">
+                <button class="btn btn-secondary mini draft-edit-btn" @click="openDraftEditor(i, di)">修改</button>
                 <button class="btn btn-primary mini" @click="confirmOne(i, di)" :loading="m.itemLoading === di">确认</button>
-                <button class="btn btn-secondary mini" @click="ignoreOne(i, di)">忽略</button>
+                <button class="btn mini draft-ignore-btn" @click="ignoreOne(i, di)">忽略</button>
               </view>
               <view class="draft-done" v-else-if="draftStatus(m, di) === 'confirmed'">已保存</view>
               <view class="draft-done" v-else>已忽略</view>
@@ -83,6 +84,119 @@
         <view class="record-icon">{{ recordCancel ? '🗑️' : '🎙️' }}</view>
         <text class="record-tip">{{ recordCancel ? '松开取消' : (recordSecs >= MAX_RECORD_SECS ? '已达上限，正在识别' : '松开结束，上滑取消') }}</text>
         <text class="record-time">{{ Math.min(recordSecs, MAX_RECORD_SECS) }}/{{ MAX_RECORD_SECS }}s</text>
+      </view>
+    </view>
+
+    <!-- AI 记账草稿编辑 -->
+    <view class="draft-editor-modal" v-if="draftEditor" @tap="closeDraftEditor">
+      <view class="draft-editor-card" @tap.stop>
+        <view class="draft-editor-head">
+          <view>
+            <text class="draft-editor-title">修改记账内容</text>
+            <text class="draft-editor-copy">保存后请在卡片上确认或忽略</text>
+          </view>
+          <text class="draft-editor-close" @tap="closeDraftEditor">×</text>
+        </view>
+
+        <scroll-view scroll-y class="draft-editor-body">
+          <view class="editor-field">
+            <text class="editor-label">收支类型</text>
+            <picker
+              class="editor-picker"
+              mode="selector"
+              range-key="label"
+              :range="draftOperationOptions"
+              :value="editorOperationIndex"
+              @change="onEditorOperationChange"
+            >
+              <view class="editor-value">{{ editorOperationLabel }}<text class="editor-chevron">›</text></view>
+            </picker>
+          </view>
+
+          <view class="editor-field">
+            <text class="editor-label">金额</text>
+            <view class="editor-input-wrap amount">
+              <text>¥</text>
+              <input class="editor-input" type="digit" v-model="draftEditor.form.amount" placeholder="0.00" />
+            </view>
+          </view>
+
+          <view class="editor-field">
+            <text class="editor-label">{{ draftEditor.form.op_type === 'transfer' ? '转出账户' : '账户/支付方式' }}</text>
+            <picker
+              class="editor-picker"
+              mode="selector"
+              range-key="label"
+              :range="editorAccountOptions"
+              :value="editorAccountIndex"
+              :disabled="!editorAccountOptions.length"
+              @change="onEditorAccountChange"
+            >
+              <view class="editor-value" :class="{ placeholder: !editorAccountLabel }">
+                {{ editorAccountLabel || '请选择' }}<text class="editor-chevron">›</text>
+              </view>
+            </picker>
+          </view>
+
+          <view class="editor-field" v-if="draftEditor.form.op_type !== 'transfer'">
+            <text class="editor-label">分类</text>
+            <picker
+              class="editor-picker"
+              mode="selector"
+              range-key="label"
+              :range="editorCategoryOptions"
+              :value="editorCategoryIndex"
+              :disabled="!editorCategoryOptions.length"
+              @change="onEditorCategoryChange"
+            >
+              <view class="editor-value" :class="{ placeholder: !draftEditor.form.category_name }">
+                {{ draftEditor.form.category_name || '请选择' }}<text class="editor-chevron">›</text>
+              </view>
+            </picker>
+          </view>
+
+          <view class="editor-field" v-else>
+            <text class="editor-label">转入账户</text>
+            <picker
+              class="editor-picker"
+              mode="selector"
+              range-key="label"
+              :range="editorTargetOptions"
+              :value="editorTargetIndex"
+              :disabled="!editorTargetOptions.length"
+              @change="onEditorTargetChange"
+            >
+              <view class="editor-value" :class="{ placeholder: !draftEditor.form.to_account_name }">
+                {{ draftEditor.form.to_account_name || '请选择' }}<text class="editor-chevron">›</text>
+              </view>
+            </picker>
+          </view>
+
+          <view class="editor-field editor-field-split">
+            <view class="editor-half">
+              <text class="editor-label">日期</text>
+              <picker mode="date" :value="draftEditor.form.date" @change="onEditorDateChange">
+                <view class="editor-value compact">{{ draftEditor.form.date }}<text class="editor-chevron">›</text></view>
+              </picker>
+            </view>
+            <view class="editor-half">
+              <text class="editor-label">时间</text>
+              <picker mode="time" :value="draftEditor.form.time" @change="onEditorTimeChange">
+                <view class="editor-value compact">{{ draftEditor.form.time }}<text class="editor-chevron">›</text></view>
+              </picker>
+            </view>
+          </view>
+
+          <view class="editor-field editor-field-column">
+            <text class="editor-label">备注</text>
+            <input class="editor-input remark" type="text" v-model="draftEditor.form.remark" placeholder="可选" />
+          </view>
+        </scroll-view>
+
+        <view class="draft-editor-actions">
+          <button class="btn btn-secondary" @tap="closeDraftEditor">取消</button>
+          <button class="btn btn-primary" @tap="saveDraftEdit">保存修改</button>
+        </view>
       </view>
     </view>
 
@@ -208,6 +322,29 @@ function buildHistory(messages) {
   return history
 }
 
+function currentDateAndTime() {
+  const now = new Date()
+  return {
+    date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
+    time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  }
+}
+
+function draftDateAndTime(value) {
+  const fallback = currentDateAndTime()
+  const source = String(value || '')
+  const dateMatch = source.match(/\d{4}-\d{2}-\d{2}/)
+  const timeMatch = source.match(/(?:T|\s)(\d{2}:\d{2})/)
+  return {
+    date: dateMatch?.[0] || fallback.date,
+    time: timeMatch?.[1] || fallback.time
+  }
+}
+
+function categoryKind(opType) {
+  return (opType === 'income' || opType === 'borrow_in') ? 'income' : 'expense'
+}
+
 export default {
   data() {
     return {
@@ -229,7 +366,19 @@ export default {
       transcribing: false,
       showPrivacy: false,
       aiEntitlement: null,
-      entitlementLoading: false
+      entitlementLoading: false,
+      accounts: [],
+      categories: { expense: [], income: [] },
+      draftEditorDataLoaded: false,
+      draftEditorLoading: false,
+      draftEditor: null,
+      draftOperationOptions: [
+        { value: 'expense', label: '支出' },
+        { value: 'income', label: '收入' },
+        { value: 'transfer', label: '转账/还款' },
+        { value: 'borrow_in', label: '借入' },
+        { value: 'borrow_out', label: '借出' }
+      ]
     }
   },
   computed: {
@@ -283,6 +432,92 @@ export default {
     },
     aiLockAction() {
       return this.aiEntitlement?.status === 'expired' ? '去激活' : '查看权益'
+    },
+    editorOperationIndex() {
+      if (!this.draftEditor) return 0
+      const index = this.draftOperationOptions.findIndex(item => item.value === this.draftEditor.form.op_type)
+      return index >= 0 ? index : 0
+    },
+    editorOperationLabel() {
+      return this.draftOperationOptions[this.editorOperationIndex]?.label || '支出'
+    },
+    editorAccountOptions() {
+      if (!this.draftEditor) return []
+      if (this.draftEditor.form.op_type === 'transfer') {
+        return this.accounts.map(account => ({
+          account,
+          paymentAccount: null,
+          label: account.name
+        }))
+      }
+      const options = []
+      this.accounts
+        .filter(account => account.type === 'alipay' || account.type === 'wechat')
+        .forEach(payment => {
+          options.push({ account: payment, paymentAccount: null, label: `${payment.name}余额` })
+          ;(payment.linked_accounts || []).filter(account => !account.is_archived).forEach(account => {
+            options.push({ account, paymentAccount: payment, label: `${payment.name} · ${account.name}` })
+          })
+        })
+      this.accounts
+        .filter(account => account.type !== 'alipay' && account.type !== 'wechat')
+        .forEach(account => options.push({ account, paymentAccount: null, label: account.name }))
+      return options
+    },
+    editorAccountIndex() {
+      if (!this.draftEditor) return 0
+      const form = this.draftEditor.form
+      const index = this.editorAccountOptions.findIndex(option => (
+        Number(option.account.id) === Number(form.account_id) &&
+        Number(option.paymentAccount?.id || 0) === Number(form.payment_account_id || 0)
+      ))
+      return index >= 0 ? index : 0
+    },
+    editorAccountLabel() {
+      if (!this.draftEditor) return ''
+      const form = this.draftEditor.form
+      const option = this.editorAccountOptions.find(item => (
+        Number(item.account.id) === Number(form.account_id) &&
+        Number(item.paymentAccount?.id || 0) === Number(form.payment_account_id || 0)
+      ))
+      if (option) return option.label
+      return form.payment_account_name
+        ? `${form.payment_account_name} · ${form.account_name}`
+        : form.account_name
+    },
+    editorCategoryOptions() {
+      if (!this.draftEditor || this.draftEditor.form.op_type === 'transfer') return []
+      const groups = this.categories[categoryKind(this.draftEditor.form.op_type)] || []
+      const options = []
+      groups.forEach(parent => {
+        const children = parent.children || []
+        if (!children.length) {
+          options.push({ id: parent.id, name: parent.name, label: `${parent.icon || '📦'} ${parent.name}` })
+          return
+        }
+        children.forEach(child => options.push({
+          id: child.id,
+          name: child.name,
+          label: `${parent.icon || '📦'} ${parent.name} / ${child.name}`
+        }))
+      })
+      return options
+    },
+    editorCategoryIndex() {
+      if (!this.draftEditor) return 0
+      const index = this.editorCategoryOptions.findIndex(item => Number(item.id) === Number(this.draftEditor.form.category_id))
+      return index >= 0 ? index : 0
+    },
+    editorTargetOptions() {
+      if (!this.draftEditor) return []
+      return this.accounts
+        .filter(account => Number(account.id) !== Number(this.draftEditor.form.account_id))
+        .map(account => ({ id: account.id, name: account.name, label: account.name }))
+    },
+    editorTargetIndex() {
+      if (!this.draftEditor) return 0
+      const index = this.editorTargetOptions.findIndex(item => Number(item.id) === Number(this.draftEditor.form.to_account_id))
+      return index >= 0 ? index : 0
     }
   },
   onLoad() {
@@ -363,6 +598,166 @@ export default {
     pendingCount(m) {
       if (!m.statuses) return 0
       return m.statuses.filter((s) => s === 'pending').length
+    },
+    async loadDraftEditorData() {
+      if (this.draftEditorDataLoaded) return true
+      if (this.draftEditorLoading) return false
+      this.draftEditorLoading = true
+      uni.showLoading({ title: '加载中...' })
+      try {
+        const [accounts, expense, income] = await Promise.all([
+          get('/accounts'),
+          get('/categories/tree', { kind: 'expense' }),
+          get('/categories/tree', { kind: 'income' })
+        ])
+        this.accounts = (accounts || []).filter(account => !account.is_archived)
+        this.categories = {
+          expense: (expense || []).map(item => ({ ...item, children: item.children || [] })),
+          income: (income || []).map(item => ({ ...item, children: item.children || [] }))
+        }
+        this.draftEditorDataLoaded = true
+        return true
+      } catch (err) {
+        uni.showToast({ title: err.message || '加载账户和分类失败', icon: 'none' })
+        return false
+      } finally {
+        uni.hideLoading()
+        this.draftEditorLoading = false
+      }
+    },
+    async openDraftEditor(msgIndex, draftIndex) {
+      const message = this.messages[msgIndex]
+      const draft = message?.drafts?.[draftIndex]
+      if (!draft || this.draftStatus(message, draftIndex) !== 'pending') return
+      if (!await this.loadDraftEditorData()) return
+      const { date, time } = draftDateAndTime(draft.occurred_at)
+      this.draftEditor = {
+        msgIndex,
+        draftIndex,
+        form: {
+          op_type: draft.op_type || 'expense',
+          amount: String(draft.amount || ''),
+          account_id: draft.account_id || null,
+          account_name: draft.account_name || '',
+          payment_account_id: draft.payment_account_id || null,
+          payment_account_name: draft.payment_account_name || '',
+          category_id: draft.category_id || null,
+          category_name: draft.category_name || '',
+          to_account_id: draft.to_account_id || null,
+          to_account_name: draft.to_account_name || '',
+          remark: draft.remark || '',
+          date,
+          time
+        }
+      }
+    },
+    closeDraftEditor() {
+      this.draftEditor = null
+    },
+    onEditorOperationChange(e) {
+      if (!this.draftEditor) return
+      const option = this.draftOperationOptions[Number(e.detail.value)]
+      if (!option || option.value === this.draftEditor.form.op_type) return
+      const previousKind = categoryKind(this.draftEditor.form.op_type)
+      this.draftEditor.form.op_type = option.value
+      if (option.value === 'transfer') {
+        this.draftEditor.form.category_id = null
+        this.draftEditor.form.category_name = ''
+        this.draftEditor.form.payment_account_id = null
+        this.draftEditor.form.payment_account_name = ''
+      } else {
+        this.draftEditor.form.to_account_id = null
+        this.draftEditor.form.to_account_name = ''
+        if (categoryKind(option.value) !== previousKind) {
+          this.draftEditor.form.category_id = null
+          this.draftEditor.form.category_name = ''
+        }
+      }
+    },
+    onEditorAccountChange(e) {
+      if (!this.draftEditor) return
+      const option = this.editorAccountOptions[Number(e.detail.value)]
+      if (!option) return
+      const form = this.draftEditor.form
+      form.account_id = option.account.id
+      form.account_name = option.account.name
+      form.payment_account_id = option.paymentAccount?.id || null
+      form.payment_account_name = option.paymentAccount?.name || ''
+      if (Number(form.to_account_id) === Number(form.account_id)) {
+        form.to_account_id = null
+        form.to_account_name = ''
+      }
+    },
+    onEditorCategoryChange(e) {
+      if (!this.draftEditor) return
+      const option = this.editorCategoryOptions[Number(e.detail.value)]
+      if (!option) return
+      this.draftEditor.form.category_id = option.id
+      this.draftEditor.form.category_name = option.name
+    },
+    onEditorTargetChange(e) {
+      if (!this.draftEditor) return
+      const option = this.editorTargetOptions[Number(e.detail.value)]
+      if (!option) return
+      this.draftEditor.form.to_account_id = option.id
+      this.draftEditor.form.to_account_name = option.name
+    },
+    onEditorDateChange(e) {
+      if (this.draftEditor) this.draftEditor.form.date = e.detail.value
+    },
+    onEditorTimeChange(e) {
+      if (this.draftEditor) this.draftEditor.form.time = e.detail.value
+    },
+    saveDraftEdit() {
+      if (!this.draftEditor) return
+      const { msgIndex, draftIndex, form } = this.draftEditor
+      const amount = Number(form.amount)
+      if (!Number.isFinite(amount) || amount <= 0) {
+        uni.showToast({ title: '请输入正确金额', icon: 'none' })
+        return
+      }
+      if (!form.account_id) {
+        uni.showToast({ title: '请选择账户', icon: 'none' })
+        return
+      }
+      if (form.op_type !== 'transfer' && !form.category_id) {
+        uni.showToast({ title: '请选择分类', icon: 'none' })
+        return
+      }
+      if (form.op_type === 'transfer' && !form.to_account_id) {
+        uni.showToast({ title: '请选择转入账户', icon: 'none' })
+        return
+      }
+      if (form.op_type === 'transfer' && Number(form.account_id) === Number(form.to_account_id)) {
+        uni.showToast({ title: '转入和转出账户不能相同', icon: 'none' })
+        return
+      }
+
+      const message = this.messages[msgIndex]
+      const original = message?.drafts?.[draftIndex]
+      if (!original || this.draftStatus(message, draftIndex) !== 'pending') {
+        this.closeDraftEditor()
+        return
+      }
+      const updated = {
+        ...original,
+        op_type: form.op_type,
+        amount: String(form.amount).trim(),
+        account_id: form.account_id,
+        account_name: form.account_name,
+        payment_account_id: form.op_type === 'transfer' ? null : (form.payment_account_id || null),
+        payment_account_name: form.op_type === 'transfer' ? '' : (form.payment_account_name || ''),
+        account_specified: true,
+        category_id: form.op_type === 'transfer' ? null : form.category_id,
+        category_name: form.op_type === 'transfer' ? '' : form.category_name,
+        to_account_id: form.op_type === 'transfer' ? form.to_account_id : null,
+        to_account_name: form.op_type === 'transfer' ? form.to_account_name : '',
+        remark: String(form.remark || '').trim(),
+        occurred_at: `${form.date} ${form.time || '12:00'}:00`
+      }
+      message.drafts.splice(draftIndex, 1, updated)
+      this.closeDraftEditor()
+      uni.showToast({ title: '已修改，请确认', icon: 'success' })
     },
     async startRecord(e) {
       if (this.recording || this.recordStarting || this.transcribing || !this.ensureAIAccess()) return
@@ -874,6 +1269,8 @@ export default {
 .draft-amount { color: #18312b; font-size: 24px; font-weight: 700; }
 .draft-detail { font-size: 13px; color: #71817a; margin-bottom: 5px; }
 .draft-actions { display: flex; gap: 8px; margin-top: 12px; }
+.draft-edit-btn { color: #2faf87; border-color: #cfe9df; }
+.draft-ignore-btn { color: #87968f; background: #f7f9f7; }
 .batch-actions {
   display: flex;
   flex-direction: column;
@@ -915,6 +1312,90 @@ export default {
 .record-icon { font-size: 40px; }
 .record-tip { font-size: 13px; }
 .record-time { font-size: 20px; font-weight: bold; }
+.draft-editor-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1150;
+  padding: 20px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(24, 49, 43, .44);
+  box-sizing: border-box;
+}
+.draft-editor-card {
+  width: 100%;
+  max-width: 430px;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 24px;
+  box-shadow: 0 24px 60px rgba(24, 49, 43, .2);
+}
+.draft-editor-head {
+  padding: 20px 20px 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid #edf1ee;
+}
+.draft-editor-title { display: block; color: #18312b; font-size: 19px; font-weight: 700; }
+.draft-editor-copy { display: block; margin-top: 4px; color: #91a099; font-size: 12px; }
+.draft-editor-close {
+  width: 32px;
+  height: 32px;
+  color: #84918c;
+  font-size: 26px;
+  line-height: 29px;
+  text-align: center;
+  background: #f2f5f3;
+  border-radius: 12px;
+}
+.draft-editor-body {
+  height: 58vh;
+  max-height: 510px;
+  padding: 4px 20px;
+  box-sizing: border-box;
+}
+.editor-field {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid #edf1ee;
+  box-sizing: border-box;
+}
+.editor-label { width: 92px; flex: 0 0 92px; color: #314d45; font-size: 14px; font-weight: 600; }
+.editor-picker { flex: 1; min-width: 0; }
+.editor-value {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: #516760;
+  font-size: 14px;
+  text-align: right;
+}
+.editor-value.placeholder { color: #a3aea9; }
+.editor-chevron { margin-left: 7px; color: #aab5b0; font-size: 22px; }
+.editor-input-wrap { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; color: #516760; }
+.editor-input-wrap.amount { font-size: 20px; font-weight: 700; }
+.editor-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  color: #18312b;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: right;
+}
+.editor-input.remark { font-size: 14px; font-weight: 400; }
+.editor-field-split { align-items: stretch; gap: 16px; }
+.editor-half { flex: 1; min-width: 0; }
+.editor-half .editor-label { display: block; width: auto; margin-top: 11px; font-size: 12px; }
+.editor-value.compact { min-height: 38px; justify-content: flex-start; text-align: left; }
+.editor-field-column { align-items: center; }
+.draft-editor-actions { padding: 14px 20px 20px; display: flex; gap: 10px; }
+.draft-editor-actions .btn { flex: 1; margin: 0; }
 .privacy-modal {
   position: fixed;
   inset: 0;
