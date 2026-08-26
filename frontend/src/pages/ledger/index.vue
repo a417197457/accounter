@@ -33,6 +33,9 @@
           <view class="ledger-actions" v-if="!ledger.is_personal" @click.stop>
             <text v-if="ledger.role === 'owner'" @click="showInviteModal(ledger)">邀请码</text>
             <text @click="showMembers(ledger)">成员</text>
+            <text class="danger" v-if="ledger.role === 'owner'" @click="clearLedgerTransactions(ledger)">
+              {{ clearingLedgerID === ledger.id ? '清空中' : '清空流水' }}
+            </text>
             <text class="danger" v-if="ledger.role === 'owner'" @click="deleteLedger(ledger)">
               {{ deletingLedgerID === ledger.id ? '删除中' : '删除' }}
             </text>
@@ -140,6 +143,7 @@ export default {
       showInvite: false,
       showMember: false,
       members: [],
+      clearingLedgerID: 0,
       deletingLedgerID: 0
     }
   },
@@ -286,8 +290,33 @@ export default {
         }
       })
     },
+    clearLedgerTransactions(ledger) {
+      if (this.clearingLedgerID || this.deletingLedgerID) return
+      uni.showModal({
+        title: '清空账本流水',
+        content: `确定清空「${ledger.name}」中的全部流水吗？个人账本中的原流水不会被删除，清空后可以重新同步。此操作不可撤销。`,
+        confirmText: '确认清空',
+        confirmColor: '#df665d',
+        success: async result => {
+          if (!result.confirm) return
+          this.clearingLedgerID = ledger.id
+          try {
+            const response = await del(`/ledgers/${ledger.id}/transactions`)
+            const deleted = response?.deleted || 0
+            uni.showToast({
+              title: deleted > 0 ? `已清空 ${deleted} 笔流水` : '账本中没有流水',
+              icon: 'none'
+            })
+          } catch (err) {
+            uni.showToast({ title: err.message || '清空失败', icon: 'none' })
+          } finally {
+            this.clearingLedgerID = 0
+          }
+        }
+      })
+    },
     deleteLedger(ledger) {
-      if (this.deletingLedgerID) return
+      if (this.deletingLedgerID || this.clearingLedgerID) return
       uni.showModal({
         title: '删除账本',
         content: `确定删除「${ledger.name}」吗？账本成员和同步记录会被删除，个人账本中的原流水不会受影响。`,

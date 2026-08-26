@@ -117,6 +117,7 @@ func main() {
 			ledgers.GET("", ledgerHandler.List)
 			ledgers.POST("", ledgerHandler.Create)
 			ledgers.POST("/join", ledgerHandler.Join)
+			ledgers.DELETE("/:id/transactions", transactionHandler.ClearSharedLedger)
 			ledgers.DELETE("/:id", ledgerHandler.Delete)
 			ledgers.GET("/:id/members", ledgerHandler.Members)
 			ledgers.DELETE("/:id/members/:uid", ledgerHandler.RemoveMember)

@@ -280,6 +280,91 @@ func TestPushAndSourceUpdatePreservePaymentRoute(t *testing.T) {
 	}
 }
 
+func TestClearSharedLedgerOwnerOnly(t *testing.T) {
+	db, err := repository.NewDB(&config.Config{
+		DB:     config.DBConfig{Driver: "sqlite"},
+		SQLite: config.SQLiteConfig{Path: "file:transaction_clear_shared_test?mode=memory&cache=shared"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := model.User{Username: "t_clear_owner", PasswordHash: "x", Nickname: "创建者"}
+	member := model.User{Username: "t_clear_member", PasswordHash: "x", Nickname: "普通成员"}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&member).Error; err != nil {
+		t.Fatal(err)
+	}
+	personal := createSyncTestLedger(t, db, owner.ID, "个人", model.LedgerTypePersonal)
+	travel := createSyncTestLedger(t, db, owner.ID, "旅行", model.LedgerTypeTravel)
+	if err := db.Create(&model.Membership{LedgerID: travel.ID, UserID: member.ID, Role: "member"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sourceAccount, sourceCategory := createSyncTestData(t, db, personal.ID, owner.ID)
+	targetAccount := model.Account{LedgerID: travel.ID, UserID: owner.ID, Name: "现金", Type: "cash", Balance: decimal.Zero}
+	targetCategory := model.Category{LedgerID: travel.ID, UserID: owner.ID, Name: "餐饮", Kind: "expense"}
+	if err := db.Create(&targetAccount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&targetCategory).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	txSvc := &TransactionService{db: db}
+	sources := make([]*model.Transaction, 0, 2)
+	for _, amount := range []int64{30, 50} {
+		source, createErr := txSvc.Create(personal.ID, owner.ID, &model.Transaction{
+			AccountID: sourceAccount.ID, CategoryID: &sourceCategory.ID, OpType: "expense",
+			Amount: decimal.NewFromInt(amount), Remark: "待同步", OccurredAt: time.Now(),
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		sources = append(sources, source)
+		if _, pushErr := txSvc.PushToLedger(personal.ID, source.ID, travel.ID, owner.ID); pushErr != nil {
+			t.Fatal(pushErr)
+		}
+	}
+
+	if _, err := txSvc.ClearSharedLedger(travel.ID, member.ID); err == nil || err.Error() != "只有账本创建者可以一键清空流水" {
+		t.Fatalf("member clear error=%v", err)
+	}
+	if _, err := txSvc.ClearSharedLedger(personal.ID, owner.ID); err == nil || err.Error() != "个人账本不能一键清空，请在明细中批量删除" {
+		t.Fatalf("personal clear error=%v", err)
+	}
+
+	deleted, err := txSvc.ClearSharedLedger(travel.ID, owner.ID)
+	if err != nil {
+		t.Fatalf("owner clear shared ledger: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted=%d, want 2", deleted)
+	}
+	var targetCount int64
+	if err := db.Model(&model.Transaction{}).Where("ledger_id = ?", travel.ID).Count(&targetCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if targetCount != 0 {
+		t.Fatalf("target transactions=%d, want 0", targetCount)
+	}
+	for _, source := range sources {
+		if err := db.First(&model.Transaction{}, source.ID).Error; err != nil {
+			t.Fatalf("source transaction %d should remain: %v", source.ID, err)
+		}
+	}
+	var clearedAccount model.Account
+	if err := db.First(&clearedAccount, targetAccount.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !clearedAccount.Balance.IsZero() {
+		t.Fatalf("target balance=%s, want 0", clearedAccount.Balance)
+	}
+	if _, err := txSvc.PushToLedger(personal.ID, sources[0].ID, travel.ID, owner.ID); err != nil {
+		t.Fatalf("source should be pushable again after clear: %v", err)
+	}
+}
+
 func createSyncTestLedger(t *testing.T, db *gorm.DB, userID uint, name, ledgerType string) model.Ledger {
 	t.Helper()
 	ledger := model.Ledger{

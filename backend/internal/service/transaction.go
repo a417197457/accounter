@@ -324,6 +324,42 @@ func (s *TransactionService) DeleteBatch(ledgerID, userID uint, ids []uint) (int
 	return deleted, nil
 }
 
+// ClearSharedLedger 由创建者一键清空家庭、旅游或礼账账本中的全部流水。
+// 这里只删除目标账本内的记录，不会触碰个人账本中的源流水；清空后可重新同步。
+func (s *TransactionService) ClearSharedLedger(ledgerID, userID uint) (int, error) {
+	var deleted int64
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var ledger model.Ledger
+		if err := tx.First(&ledger, ledgerID).Error; err != nil {
+			return errors.New("账本不存在")
+		}
+		if ledger.IsPersonal {
+			return errors.New("个人账本不能一键清空，请在明细中批量删除")
+		}
+		if ledger.OwnerID != userID {
+			return errors.New("只有账本创建者可以一键清空流水")
+		}
+
+		result := tx.Where("ledger_id = ? AND deleted_at IS NULL", ledgerID).Delete(&model.Transaction{})
+		if result.Error != nil {
+			return fmt.Errorf("清空账本流水失败: %w", result.Error)
+		}
+		deleted = result.RowsAffected
+
+		// 账户均以 0 余额创建；账本没有流水后，余额也应恢复为 0。
+		if err := tx.Model(&model.Account{}).
+			Where("ledger_id = ? AND deleted_at IS NULL", ledgerID).
+			Update("balance", decimal.Zero).Error; err != nil {
+			return fmt.Errorf("重置账本账户余额失败: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 func normalizeTransactionIDs(ids []uint) ([]uint, error) {
 	if len(ids) == 0 {
 		return nil, errors.New("请至少选择一笔流水")

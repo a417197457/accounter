@@ -333,6 +333,19 @@ func (h *TransactionHandler) DeleteBatch(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"deleted": deleted}})
 }
 
+// ClearSharedLedger 创建者一键清空非个人账本中的全部流水。
+func (h *TransactionHandler) ClearSharedLedger(c *gin.Context) {
+	ledgerID := getUintParam(c, "id")
+	userID := middleware.UserID(c)
+	deleted, err := h.service.ClearSharedLedger(ledgerID, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	observability.Event(c, "ledger_transactions_cleared", "ledger_id", ledgerID, "deleted", deleted)
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"deleted": deleted}})
+}
+
 // PushBatch 批量同步选中的个人流水到目标账本。
 func (h *TransactionHandler) PushBatch(c *gin.Context) {
 	ledgerID := middleware.LedgerID(c)
