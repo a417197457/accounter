@@ -283,8 +283,8 @@
           <text class="activation-tip">正在读取权益状态，请稍候...</text>
         </view>
         <view class="activation-section" v-else-if="aiEntitlement.status !== 'activated'">
-          <text class="activation-title">永久激活</text>
-          <text class="activation-tip">输入一次性激活码，成功后当前账号可持续使用 AI 功能。</text>
+          <text class="activation-title">激活 AI 功能</text>
+          <text class="activation-tip">激活码可按不同期限开通，具体有效期以兑换结果为准。</text>
           <input
             class="input create-input activation-input"
             v-model="activationCode"
@@ -294,7 +294,7 @@
           <button class="btn btn-primary activation-btn" @click="activateAI" :loading="activationLoading">立即激活</button>
         </view>
         <view class="entitlement-permanent" v-else>
-          <text>此权益绑定当前账号，在其他设备登录后同样有效。</text>
+          <text>{{ aiActivatedBindingCopy }}</text>
         </view>
         <button class="btn btn-secondary entitlement-close" @click="showAIEntitlement = false">关闭</button>
       </view>
@@ -474,29 +474,46 @@ export default {
       const seconds = Number(this.aiEntitlement?.remaining_seconds || 0)
       return seconds > 0 ? Math.max(1, Math.ceil(seconds / 86400)) : 0
     },
+    aiHasTimedActivation() {
+      return Boolean(this.aiEntitlement?.activated_expires_at)
+    },
+    aiActivationExpired() {
+      return this.aiEntitlement?.status === 'expired' && Boolean(this.aiEntitlement?.activated_at)
+    },
     aiEntitlementCopy() {
       const status = this.aiEntitlement?.status
+      if (status === 'activated' && this.aiHasTimedActivation) return `已激活 · 剩余 ${this.aiRemainingDays} 天`
       if (status === 'activated') return '已永久激活'
       if (status === 'trial') return `试用中 · 剩余 ${this.aiRemainingDays} 天`
+      if (this.aiActivationExpired) return 'AI 权益已到期 · 输入激活码继续使用'
       if (status === 'expired') return '试用已结束 · 输入激活码继续使用'
       if (status === 'not_started') return `${this.aiEntitlement?.trial_days || 7} 天试用 · 首次使用时开始`
       return '正在读取权益状态'
     },
     aiEntitlementTitle() {
       const status = this.aiEntitlement?.status
+      if (status === 'activated' && this.aiHasTimedActivation) return `AI 功能使用中，剩余 ${this.aiRemainingDays} 天`
       if (status === 'activated') return 'AI 功能已永久激活'
       if (status === 'trial') return `AI 试用中，剩余 ${this.aiRemainingDays} 天`
+      if (this.aiActivationExpired) return 'AI 权益已到期'
       if (status === 'expired') return 'AI 试用已结束'
       if (status === 'not_started') return `${this.aiEntitlement?.trial_days || 7} 天试用尚未开始`
       return '正在读取'
     },
     aiEntitlementDetail() {
       const status = this.aiEntitlement?.status
+      if (status === 'activated' && this.aiHasTimedActivation) return `有效期至 ${this.formatEntitlementTime(this.aiEntitlement?.activated_expires_at)}`
       if (status === 'activated') return '文字记账与语音识别均可继续使用'
       if (status === 'trial') return `有效期至 ${this.formatEntitlementTime(this.aiEntitlement?.trial_expires_at)}`
       if (status === 'expired') return '普通记账、明细与报表不受影响'
       if (status === 'not_started') return '第一次成功调用 AI 后开始计算 7×24 小时'
       return '请稍候'
+    },
+    aiActivatedBindingCopy() {
+      if (this.aiHasTimedActivation) {
+        return `权益有效期至 ${this.formatEntitlementTime(this.aiEntitlement?.activated_expires_at)}，并绑定当前账号。`
+      }
+      return '此永久权益绑定当前账号，在其他设备登录后同样有效。'
     }
   },
   onShow() {
@@ -690,7 +707,7 @@ export default {
       try {
         this.aiEntitlement = await post('/ai/activate', { code })
         this.activationCode = ''
-        uni.showToast({ title: 'AI 功能已永久激活', icon: 'success' })
+        uni.showToast({ title: 'AI 功能已激活', icon: 'success' })
       } catch (err) {
         // request.js 已显示后端的明确错误信息。
       } finally {

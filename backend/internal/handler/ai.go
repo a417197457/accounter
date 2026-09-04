@@ -127,7 +127,7 @@ type ActivateAIRequest struct {
 	Code string `json:"code" binding:"required,max=64"`
 }
 
-// Activate 使用一次性激活码永久开通当前账号的 AI 权益。
+// Activate 使用一次性激活码限时或永久开通当前账号的 AI 权益。
 func (h *AIHandler) Activate(c *gin.Context) {
 	var req ActivateAIRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

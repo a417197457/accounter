@@ -23,7 +23,7 @@ import (
 const activationAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 var (
-	ErrAIAccessExpired        = errors.New("AI试用已结束，请激活后继续使用")
+	ErrAIAccessExpired        = errors.New("AI权益已到期，请激活后继续使用")
 	ErrAIDailyLimitReached    = errors.New("今日AI使用次数已达上限，请明天再试")
 	ErrActivationCodeInvalid  = errors.New("激活码无效或已被使用")
 	ErrActivationCodeExpired  = errors.New("激活码已过期")
@@ -34,32 +34,35 @@ var (
 
 // AIEntitlementView 是前端可见的 AI 权益状态。
 type AIEntitlementView struct {
-	Status           string     `json:"status"` // not_started | trial | expired | activated
-	AccessAllowed    bool       `json:"access_allowed"`
-	TrialDays        int        `json:"trial_days"`
-	TrialStartedAt   *time.Time `json:"trial_started_at,omitempty"`
-	TrialExpiresAt   *time.Time `json:"trial_expires_at,omitempty"`
-	ActivatedAt      *time.Time `json:"activated_at,omitempty"`
-	RemainingSeconds int64      `json:"remaining_seconds"`
-	DailyUsed        int        `json:"daily_used"`
-	DailyLimit       int        `json:"daily_limit"`
+	Status             string     `json:"status"` // not_started | trial | expired | activated
+	AccessAllowed      bool       `json:"access_allowed"`
+	TrialDays          int        `json:"trial_days"`
+	TrialStartedAt     *time.Time `json:"trial_started_at,omitempty"`
+	TrialExpiresAt     *time.Time `json:"trial_expires_at,omitempty"`
+	ActivatedAt        *time.Time `json:"activated_at,omitempty"`
+	ActivatedExpiresAt *time.Time `json:"activated_expires_at,omitempty"`
+	RemainingSeconds   int64      `json:"remaining_seconds"`
+	DailyUsed          int        `json:"daily_used"`
+	DailyLimit         int        `json:"daily_limit"`
 }
 
 // ActivationCodeCreateOptions 是管理命令生成激活码时的批次参数。
 type ActivationCodeCreateOptions struct {
-	Count      int
-	BatchName  string
-	ExpiresAt  *time.Time
-	AssignedTo string
-	Note       string
+	Count          int
+	BatchName      string
+	DurationMonths int
+	ExpiresAt      *time.Time
+	AssignedTo     string
+	Note           string
 }
 
 // PlainActivationCode 仅在创建时返回一次明文。
 type PlainActivationCode struct {
-	ID        uint
-	Code      string
-	BatchName string
-	ExpiresAt *time.Time
+	ID             uint
+	Code           string
+	BatchName      string
+	DurationMonths int
+	ExpiresAt      *time.Time
 }
 
 // ActivationCodeSummary 是管理命令可安全展示的激活码摘要。
@@ -67,6 +70,7 @@ type ActivationCodeSummary struct {
 	ID               uint
 	DisplaySuffix    string
 	BatchName        string
+	DurationMonths   int
 	Status           string
 	ExpiresAt        *time.Time
 	AssignedTo       string
@@ -75,7 +79,7 @@ type ActivationCodeSummary struct {
 	CreatedAt        time.Time
 }
 
-// AIEntitlementService 管理试用期、每日调用额度和永久激活。
+// AIEntitlementService 管理试用期、每日调用额度以及限时或永久激活。
 type AIEntitlementService struct {
 	db                       *gorm.DB
 	now                      func() time.Time
@@ -144,9 +148,17 @@ func (s *AIEntitlementService) Status(userID uint) (*AIEntitlementView, error) {
 		view.TrialStartedAt = entitlement.TrialStartedAt
 		view.TrialExpiresAt = entitlement.TrialExpiresAt
 		view.ActivatedAt = entitlement.ActivatedAt
+		view.ActivatedExpiresAt = entitlement.ActivatedExpiresAt
 		switch {
-		case entitlement.ActivatedAt != nil:
+		case entitlement.ActivatedAt != nil && (entitlement.ActivatedExpiresAt == nil || now.Before(entitlement.ActivatedExpiresAt.UTC())):
 			view.Status = "activated"
+			view.DailyLimit = activatedLimit
+			if entitlement.ActivatedExpiresAt != nil {
+				view.RemainingSeconds = int64(entitlement.ActivatedExpiresAt.UTC().Sub(now).Seconds())
+			}
+		case entitlement.ActivatedAt != nil:
+			view.Status = "expired"
+			view.AccessAllowed = false
 			view.DailyLimit = activatedLimit
 		case entitlement.TrialStartedAt == nil || entitlement.TrialExpiresAt == nil:
 			view.Status = "not_started"
@@ -286,6 +298,20 @@ func activationSuffix(normalizedCode string) string {
 	return normalizedCode[len(normalizedCode)-4:]
 }
 
+// addCalendarMonthsClamped 按自然月计算权益到期时间；目标月份没有同一日期时取月末。
+func addCalendarMonthsClamped(value time.Time, months int) time.Time {
+	firstOfTargetMonth := time.Date(value.Year(), value.Month()+time.Month(months), 1,
+		value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), value.Location())
+	lastDay := time.Date(firstOfTargetMonth.Year(), firstOfTargetMonth.Month()+1, 0,
+		value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), value.Location()).Day()
+	day := value.Day()
+	if day > lastDay {
+		day = lastDay
+	}
+	return time.Date(firstOfTargetMonth.Year(), firstOfTargetMonth.Month(), day,
+		value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), value.Location())
+}
+
 func (s *AIEntitlementService) checkActivationRateLimit(userID uint, ipHash string) error {
 	now := s.now().UTC()
 	_, _, _, userLimit, ipLimit := s.normalizedLimits()
@@ -389,22 +415,29 @@ func (s *AIEntitlementService) Activate(userID uint, rawCode, clientIP string) (
 				return ErrActivationCodeInvalid
 			}
 		}
+		var activatedExpiresAt *time.Time
+		if code.DurationMonths > 0 {
+			expiresAt := addCalendarMonthsClamped(now, code.DurationMonths)
+			activatedExpiresAt = &expiresAt
+		}
 
 		var entitlement model.AIEntitlement
 		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userID).First(&entitlement).Error
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return tx.Create(&model.AIEntitlement{
-				UserID:           userID,
-				ActivatedAt:      &now,
-				ActivationCodeID: &code.ID,
+				UserID:             userID,
+				ActivatedAt:        &now,
+				ActivatedExpiresAt: activatedExpiresAt,
+				ActivationCodeID:   &code.ID,
 			}).Error
 		}
 		if findErr != nil {
 			return findErr
 		}
 		return tx.Model(&entitlement).Updates(map[string]interface{}{
-			"activated_at":       now,
-			"activation_code_id": code.ID,
+			"activated_at":         now,
+			"activated_expires_at": activatedExpiresAt,
+			"activation_code_id":   code.ID,
 		}).Error
 	})
 	if err != nil {
@@ -419,6 +452,9 @@ func (s *AIEntitlementService) CreateActivationCodes(options ActivationCodeCreat
 	if options.Count <= 0 || options.Count > 1000 {
 		return nil, fmt.Errorf("单次生成数量必须为 1-1000")
 	}
+	if options.DurationMonths < 0 || options.DurationMonths > 120 {
+		return nil, fmt.Errorf("兑换后有效月数必须为 0-120，0 表示永久")
+	}
 	if len(s.activationSecret) < 16 {
 		return nil, fmt.Errorf("AI_ACTIVATION_SECRET 未正确配置")
 	}
@@ -432,18 +468,19 @@ func (s *AIEntitlementService) CreateActivationCodes(options ActivationCodeCreat
 			}
 			normalized, _ := normalizeActivationCode(plain)
 			record := model.ActivationCode{
-				CodeHash:      s.codeHash(normalized),
-				DisplaySuffix: activationSuffix(normalized),
-				BatchName:     strings.TrimSpace(options.BatchName),
-				ExpiresAt:     options.ExpiresAt,
-				AssignedTo:    strings.TrimSpace(options.AssignedTo),
-				Note:          strings.TrimSpace(options.Note),
+				CodeHash:       s.codeHash(normalized),
+				DisplaySuffix:  activationSuffix(normalized),
+				BatchName:      strings.TrimSpace(options.BatchName),
+				DurationMonths: options.DurationMonths,
+				ExpiresAt:      options.ExpiresAt,
+				AssignedTo:     strings.TrimSpace(options.AssignedTo),
+				Note:           strings.TrimSpace(options.Note),
 			}
 			if err := tx.Create(&record).Error; err != nil {
 				return err
 			}
 			created = append(created, PlainActivationCode{
-				ID: record.ID, Code: plain, BatchName: record.BatchName, ExpiresAt: record.ExpiresAt,
+				ID: record.ID, Code: plain, BatchName: record.BatchName, DurationMonths: record.DurationMonths, ExpiresAt: record.ExpiresAt,
 			})
 		}
 		return nil
@@ -476,7 +513,7 @@ func (s *AIEntitlementService) ListActivationCodes(batchName, status string) ([]
 			continue
 		}
 		result = append(result, ActivationCodeSummary{
-			ID: record.ID, DisplaySuffix: record.DisplaySuffix, BatchName: record.BatchName,
+			ID: record.ID, DisplaySuffix: record.DisplaySuffix, BatchName: record.BatchName, DurationMonths: record.DurationMonths,
 			Status: currentStatus, ExpiresAt: record.ExpiresAt, AssignedTo: record.AssignedTo,
 			RedeemedByUserID: record.RedeemedByUserID, RedeemedAt: record.RedeemedAt, CreatedAt: record.CreatedAt,
 		})

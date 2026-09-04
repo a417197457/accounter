@@ -102,6 +102,9 @@ func TestActivationCodeIsOneTimeAndStoredAsHash(t *testing.T) {
 	if activated.Status != "activated" || !activated.AccessAllowed {
 		t.Fatalf("激活状态错误: %+v", activated)
 	}
+	if activated.ActivatedExpiresAt != nil {
+		t.Fatalf("未指定期限的旧式激活码应保持永久权益: %+v", activated)
+	}
 
 	var stored model.ActivationCode
 	if err := svc.db.First(&stored, codes[0].ID).Error; err != nil {
@@ -117,6 +120,70 @@ func TestActivationCodeIsOneTimeAndStoredAsHash(t *testing.T) {
 	}
 	if _, err := svc.Activate(other.ID, codes[0].Code, "127.0.0.2"); !errors.Is(err, ErrActivationCodeInvalid) {
 		t.Fatalf("同一激活码不应被第二个用户使用: %v", err)
+	}
+}
+
+func TestTimedActivationUsesCalendarMonthsAndCanBeRenewedAfterExpiry(t *testing.T) {
+	svc, user, now := setupAIEntitlementTest(t)
+	*now = time.Date(2026, 1, 31, 12, 30, 0, 0, time.UTC)
+
+	codes, err := svc.CreateActivationCodes(ActivationCodeCreateOptions{
+		Count: 1, BatchName: "one-month", DurationMonths: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codes[0].DurationMonths != 1 {
+		t.Fatalf("创建结果应返回权益月数: %+v", codes[0])
+	}
+
+	activated, err := svc.Activate(user.ID, codes[0].Code, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExpiry := time.Date(2026, 2, 28, 12, 30, 0, 0, time.UTC)
+	if activated.ActivatedExpiresAt == nil || !activated.ActivatedExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("月末到期时间应截断到目标月最后一天: want=%s got=%v", wantExpiry, activated.ActivatedExpiresAt)
+	}
+	if activated.Status != "activated" || activated.RemainingSeconds <= 0 {
+		t.Fatalf("限时权益应处于激活状态: %+v", activated)
+	}
+
+	*now = wantExpiry
+	if _, err := svc.CheckAccess(user.ID); !errors.Is(err, ErrAIAccessExpired) {
+		t.Fatalf("到达权益截止时间后应禁止 AI 使用: %v", err)
+	}
+
+	renewalCodes, err := svc.CreateActivationCodes(ActivationCodeCreateOptions{
+		Count: 1, BatchName: "three-month", DurationMonths: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := svc.Activate(user.ID, renewalCodes[0].Code, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRenewedExpiry := time.Date(2026, 5, 28, 12, 30, 0, 0, time.UTC)
+	if renewed.ActivatedExpiresAt == nil || !renewed.ActivatedExpiresAt.Equal(wantRenewedExpiry) {
+		t.Fatalf("续期后的到期时间错误: want=%s got=%v", wantRenewedExpiry, renewed.ActivatedExpiresAt)
+	}
+
+	summaries, err := svc.ListActivationCodes("three-month", "redeemed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].DurationMonths != 3 {
+		t.Fatalf("激活码列表应展示权益月数: %+v", summaries)
+	}
+}
+
+func TestActivationCodeDurationValidation(t *testing.T) {
+	svc, _, _ := setupAIEntitlementTest(t)
+	for _, months := range []int{-1, 121} {
+		if _, err := svc.CreateActivationCodes(ActivationCodeCreateOptions{Count: 1, DurationMonths: months}); err == nil {
+			t.Fatalf("期限 %d 个月应校验失败", months)
+		}
 	}
 }
 

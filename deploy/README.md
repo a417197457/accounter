@@ -58,10 +58,12 @@ sudo acli ops bills --user-id 12 --show-remark
 激活码数据库只保存 HMAC，明文只在创建时输出一次：
 
 ```bash
-# 创建 20 个首发激活码，2027-01-01 当天仍可兑换；CSV 权限固定为 600
+# 创建 20 个三个月激活码，权益从兑换时开始；2027-01-01 当天仍可兑换
 sudo acli activation-code create \
-  --count 20 --batch first-release --expires 2027-01-01 \
+  --count 20 --duration-months 3 --batch first-release --expires 2027-01-01 \
   --output /root/qingzhang-first-release.csv
+
+# duration-months 支持 1-120；不传或传 0 时生成永久激活码
 
 # 只看未使用码；列表仅显示末四位，不泄露完整激活码
 sudo acli activation-code list \

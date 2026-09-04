@@ -401,7 +401,11 @@ export default {
         }
       }
       if (entitlement.status === 'expired') {
-        return { title: 'AI 试用已结束', copy: '普通记账、明细和报表不受影响', action: '去激活' }
+        return {
+          title: entitlement.activated_at ? 'AI 权益已到期' : 'AI 试用已结束',
+          copy: '普通记账、明细和报表不受影响',
+          action: '去激活'
+        }
       }
       if (entitlement.status === 'not_started') {
         return {
@@ -413,7 +417,7 @@ export default {
       if (entitlement.status === 'trial' && this.aiRemainingDays <= 3) {
         return {
           title: `AI 试用还剩 ${this.aiRemainingDays} 天`,
-          copy: '激活后可持续使用文字和语音记账',
+          copy: '激活后可继续使用文字和语音记账',
           action: '去激活'
         }
       }
@@ -423,7 +427,9 @@ export default {
       return Boolean(this.aiNotice?.action)
     },
     aiLockTitle() {
-      if (this.aiEntitlement?.status === 'expired') return 'AI 试用已结束'
+      if (this.aiEntitlement?.status === 'expired') {
+        return this.aiEntitlement?.activated_at ? 'AI 权益已到期' : 'AI 试用已结束'
+      }
       return '今日 AI 使用次数已达上限'
     },
     aiLockCopy() {

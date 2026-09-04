@@ -91,7 +91,7 @@ func printUsage() {
   accounter-admin ops bills --user-id 12 --show-remark
 
 激活码管理：
-  accounter-admin activation-code create --count 20 --batch first-release --expires 2027-01-01 --output codes.csv
+  accounter-admin activation-code create --count 20 --duration-months 3 --batch first-release --expires 2027-01-01 --output codes.csv
   accounter-admin activation-code list --status unused --batch first-release
   accounter-admin activation-code revoke --id 123
 
@@ -116,6 +116,7 @@ func runCreate(svc *service.AIEntitlementService, args []string) {
 	flags := flag.NewFlagSet("activation-code create", flag.ExitOnError)
 	count := flags.Int("count", 1, "生成数量，1-1000")
 	batch := flags.String("batch", "", "批次名称")
+	durationMonths := flags.Int("duration-months", 0, "兑换后有效月数，0 表示永久，1-120 表示限时月数")
 	expires := flags.String("expires", "", "兑换截止日期 YYYY-MM-DD，当天有效")
 	assignedTo := flags.String("assigned-to", "", "发放对象备注")
 	note := flags.String("note", "", "内部备注")
@@ -127,7 +128,8 @@ func runCreate(svc *service.AIEntitlementService, args []string) {
 		log.Fatal(err)
 	}
 	codes, err := svc.CreateActivationCodes(service.ActivationCodeCreateOptions{
-		Count: *count, BatchName: *batch, ExpiresAt: expiresAt, AssignedTo: *assignedTo, Note: *note,
+		Count: *count, BatchName: *batch, DurationMonths: *durationMonths,
+		ExpiresAt: expiresAt, AssignedTo: *assignedTo, Note: *note,
 	})
 	if err != nil {
 		log.Fatalf("生成激活码失败: %v", err)
@@ -141,13 +143,16 @@ func runCreate(svc *service.AIEntitlementService, args []string) {
 		defer closer.Close()
 	}
 	csvWriter := csv.NewWriter(writer)
-	_ = csvWriter.Write([]string{"id", "code", "batch", "expires_at"})
+	_ = csvWriter.Write([]string{"id", "code", "batch", "duration_months", "expires_at"})
 	for _, code := range codes {
 		expiresText := ""
 		if code.ExpiresAt != nil {
 			expiresText = code.ExpiresAt.In(time.Local).Format(time.RFC3339)
 		}
-		_ = csvWriter.Write([]string{strconv.FormatUint(uint64(code.ID), 10), code.Code, code.BatchName, expiresText})
+		_ = csvWriter.Write([]string{
+			strconv.FormatUint(uint64(code.ID), 10), code.Code, code.BatchName,
+			strconv.Itoa(code.DurationMonths), expiresText,
+		})
 	}
 	csvWriter.Flush()
 	if err := csvWriter.Error(); err != nil {
@@ -185,6 +190,10 @@ func runList(svc *service.AIEntitlementService, args []string) {
 	}
 	rows := make([][]string, 0, len(records))
 	for _, record := range records {
+		durationText := "永久"
+		if record.DurationMonths > 0 {
+			durationText = fmt.Sprintf("%d个月", record.DurationMonths)
+		}
 		expiresText := "-"
 		if record.ExpiresAt != nil {
 			expiresText = record.ExpiresAt.In(time.Local).Format("2006-01-02 15:04")
@@ -195,12 +204,12 @@ func runList(svc *service.AIEntitlementService, args []string) {
 		}
 		rows = append(rows, []string{
 			strconv.FormatUint(uint64(record.ID), 10), record.DisplaySuffix, record.BatchName, record.Status,
-			expiresText, userText, record.AssignedTo, record.CreatedAt.In(time.Local).Format("2006-01-02 15:04"),
+			durationText, expiresText, userText, record.AssignedTo, record.CreatedAt.In(time.Local).Format("2006-01-02 15:04"),
 		})
 	}
 	if err := writeTable(os.Stdout, []tableColumn{
 		{Title: "ID", AlignRight: true}, {Title: "尾号"}, {Title: "批次"}, {Title: "状态"},
-		{Title: "到期时间"}, {Title: "兑换用户", AlignRight: true}, {Title: "发放对象"}, {Title: "创建时间"},
+		{Title: "权益期限"}, {Title: "兑换截止"}, {Title: "兑换用户", AlignRight: true}, {Title: "发放对象"}, {Title: "创建时间"},
 	}, rows); err != nil {
 		log.Fatalf("输出激活码列表失败: %v", err)
 	}

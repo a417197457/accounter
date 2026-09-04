@@ -188,17 +188,18 @@ type Setting struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// AIEntitlement 保存用户级 AI 试用和永久激活权益。
+// AIEntitlement 保存用户级 AI 试用、限时和永久激活权益。
 // 状态由时间字段推导，避免额外 status 字段与实际时间不一致。
 type AIEntitlement struct {
-	ID               uint       `gorm:"primarykey" json:"id"`
-	UserID           uint       `gorm:"not null;uniqueIndex" json:"user_id"`
-	TrialStartedAt   *time.Time `json:"trial_started_at,omitempty"`
-	TrialExpiresAt   *time.Time `gorm:"index" json:"trial_expires_at,omitempty"`
-	ActivatedAt      *time.Time `json:"activated_at,omitempty"`
-	ActivationCodeID *uint      `gorm:"index" json:"-"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                 uint       `gorm:"primarykey" json:"id"`
+	UserID             uint       `gorm:"not null;uniqueIndex" json:"user_id"`
+	TrialStartedAt     *time.Time `json:"trial_started_at,omitempty"`
+	TrialExpiresAt     *time.Time `gorm:"index" json:"trial_expires_at,omitempty"`
+	ActivatedAt        *time.Time `json:"activated_at,omitempty"`
+	ActivatedExpiresAt *time.Time `gorm:"index" json:"activated_expires_at,omitempty"`
+	ActivationCodeID   *uint      `gorm:"index" json:"-"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 // ActivationCode 只保存激活码 HMAC，不保存可兑换的明文。
@@ -207,6 +208,7 @@ type ActivationCode struct {
 	CodeHash         string     `gorm:"size:64;not null;uniqueIndex" json:"-"`
 	DisplaySuffix    string     `gorm:"size:8;not null;index" json:"display_suffix"`
 	BatchName        string     `gorm:"size:64;index" json:"batch_name"`
+	DurationMonths   int        `gorm:"not null;default:0" json:"duration_months"`
 	ExpiresAt        *time.Time `gorm:"index" json:"expires_at,omitempty"`
 	AssignedTo       string     `gorm:"size:128" json:"assigned_to,omitempty"`
 	RedeemedByUserID *uint      `gorm:"index" json:"redeemed_by_user_id,omitempty"`
