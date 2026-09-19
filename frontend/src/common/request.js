@@ -45,18 +45,20 @@ export function request(url, method = 'GET', data = {}, options = {}) {
             return
           }
 
-          // 其他接口的 401，token 过期，跳登录
+          // 其他接口的 401：游客浏览时不自动跳登录；已有 token 失效时才回登录页。
           uni.removeStorageSync(TOKEN_KEY)
           uni.removeStorageSync(USER_KEY)
-          const currentPage = getCurrentPages().pop()
-          if (currentPage && currentPage.route !== 'pages/login/index') {
-            uni.redirectTo({ url: '/pages/login/index' })
-            if (!options.silent) {
-              uni.showToast({ title: '未登录或登录已过期', icon: 'none' })
+          if (token) {
+            const currentPage = getCurrentPages().pop()
+            if (currentPage && currentPage.route !== 'pages/login/index') {
+              uni.navigateTo({ url: '/pages/login/index' })
+              if (!options.silent) {
+                uni.showToast({ title: '登录已过期，请重新登录', icon: 'none' })
+              }
             }
           }
-          const error = new Error('未登录或登录已过期')
-          error.code = res.data?.code || 'UNAUTHORIZED'
+          const error = new Error(token ? '登录已过期，请重新登录' : '登录后即可使用该功能')
+          error.code = res.data?.code || (token ? 'UNAUTHORIZED' : 'AUTH_REQUIRED')
           error.statusCode = res.statusCode
           reject(error)
           return

@@ -39,6 +39,7 @@ func TestValidateProductionRequiresActivationSecret(t *testing.T) {
 		DB:  DBConfig{Driver: "mysql", DSN: "configured"},
 		JWT: JWTConfig{Secret: strings.Repeat("j", 32)},
 		AI: AIConfig{
+			Enabled:             true,
 			ActivationSecret:    "CHANGE_TO_ANOTHER_RANDOM_SECRET",
 			TrialDays:           7,
 			TrialDailyLimit:     50,
@@ -51,5 +52,16 @@ func TestValidateProductionRequiresActivationSecret(t *testing.T) {
 	production.AI.ActivationSecret = strings.Repeat("a", 32)
 	if err := production.ValidateProduction(); err != nil {
 		t.Fatalf("有效生产配置不应被拒绝: %v", err)
+	}
+}
+
+func TestValidateProductionAllowsDisabledAIWithoutActivationConfig(t *testing.T) {
+	production := Config{
+		DB:  DBConfig{Driver: "mysql", DSN: "configured"},
+		JWT: JWTConfig{Secret: strings.Repeat("j", 32)},
+		AI:  AIConfig{Enabled: false},
+	}
+	if err := production.ValidateProduction(); err != nil {
+		t.Fatalf("AI 关闭时不应要求 AI 激活配置: %v", err)
 	}
 }

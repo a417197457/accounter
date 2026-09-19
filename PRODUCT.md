@@ -110,7 +110,7 @@
 
 - **后端**：Go + Gin + GORM（开发 SQLite / 生产 MySQL）
 - **前端**：uni-app Vue3 + Vite（H5）
-- **AI**：阿里云百炼（对话 Function Calling + `qwen3-asr-flash`）
+- **AI**：阿里云百炼 MaaS 同源接口（对话 Function Calling + `qwen-audio-3.0-asr-flash`）
 - **隔离**：业务数据按 `ledger_id`；鉴权 JWT；查看账本头 `X-Ledger-Id`
 - **本地启动**：`./dev.sh` → API `:8080` + H5 `:5173`
 - **API 自测**：`backend/e2e_test.sh`（需先起后端于 `:18080` 或改脚本端口）

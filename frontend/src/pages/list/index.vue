@@ -6,13 +6,13 @@
         <text class="page-title">收支明细</text>
         <text class="page-copy">每一笔都清楚，每个月都安心</text>
       </view>
-      <text class="batch-entry" @click="toggleSelectionMode">{{ selectionMode ? '取消' : '批量管理' }}</text>
+      <text class="batch-entry" v-if="loggedIn" @click="toggleSelectionMode">{{ selectionMode ? '取消' : '批量管理' }}</text>
     </view>
     <view class="current-ledger" @click="goLedgerManagement">
       <view class="current-ledger-icon">{{ ledgerTypeIcon(currentLedger) }}</view>
       <view class="current-ledger-main">
         <text class="current-ledger-label">当前账本</text>
-        <text class="current-ledger-name">{{ currentLedger?.name || '正在加载' }}</text>
+        <text class="current-ledger-name">{{ currentLedger?.name || (loggedIn ? '正在加载' : '游客预览') }}</text>
       </view>
       <text class="current-ledger-switch">切换账本 ›</text>
     </view>
@@ -21,10 +21,15 @@
     <view v-if="selectionMode" class="selection-hint">点击流水进行多选，单次最多操作 100 笔</view>
 
     <view v-if="groupedTransactions.length === 0" class="empty">
-      <text class="empty-title">暂无流水</text>
-      <text class="empty-tip" v-if="!isSharedLedger">用 AI 说话记账，或手动记一笔</text>
+      <text class="empty-title">{{ loggedIn ? '暂无流水' : '登录后查看个人明细' }}</text>
+      <text class="empty-tip" v-if="!loggedIn">你的账单只对登录后的本人可见，现在可以继续浏览功能。</text>
+      <text class="empty-tip" v-else-if="!isSharedLedger">用 AI 说话记账，或手动记一笔</text>
       <text class="empty-tip" v-else>成员从个人账本同步后，账单会出现在这里</text>
-      <view class="empty-actions" v-if="!isSharedLedger">
+      <view class="empty-actions" v-if="!loggedIn">
+        <button class="btn btn-primary" @click="requestLogin()">登录后查看</button>
+        <button class="btn btn-secondary" @click="goRecord">先体验记一笔</button>
+      </view>
+      <view class="empty-actions" v-else-if="!isSharedLedger">
         <button class="btn btn-primary" @click="goChat">AI 记账</button>
         <button class="btn btn-secondary" @click="goRecord">记一笔</button>
       </view>
@@ -132,7 +137,7 @@
 
 <script>
 import { get, post, del } from '../../common/request.js'
-import { checkLogin } from '../../common/auth.js'
+import { isLoggedIn, requireLogin } from '../../common/auth.js'
 import { paymentRouteLabel } from '../../common/account.js'
 
 const OPEN_LEDGER_KEY = 'open_ledger_id'
@@ -149,6 +154,7 @@ export default {
       pushTransactionIDs: [],
       selectionMode: false,
       selectedMap: {},
+      loggedIn: false,
       batchLoading: false
     }
   },
@@ -166,13 +172,21 @@ export default {
       return this.selectedIDs.length
     }
   },
-  onLoad() {
-    checkLogin()
-  },
+  onLoad() {},
   onShow() {
-    this.loadLedgers()
+    this.loggedIn = isLoggedIn()
+    if (this.loggedIn) this.loadLedgers()
+    else {
+      this.ledgers = []
+      this.currentLedger = null
+      this.groupedTransactions = []
+      this.cancelSelection()
+    }
   },
   methods: {
+    requestLogin() {
+      requireLogin('登录后即可查看仅属于你的收支明细')
+    },
     async loadLedgers() {
       try {
         const ledgers = await get('/ledgers')
@@ -188,9 +202,7 @@ export default {
           this.ledgers[0]
         await this.loadTransactions()
       } catch (err) {
-        if (err.message && err.message.includes('未登录')) {
-          uni.redirectTo({ url: '/pages/login/index' })
-        }
+        if (err?.code !== 'UNAUTHORIZED') console.error('加载账本失败:', err)
       }
     },
     async switchLedger(ledger) {
@@ -329,6 +341,7 @@ export default {
       return ({ personal: '账', family: '🏠', travel: '✈️', gift: '🧧' })[ledger?.type] || '账'
     },
     goLedgerManagement() {
+      if (!this.loggedIn) return requireLogin('登录后即可查看和管理个人账本')
       uni.navigateTo({ url: '/pages/ledger/index' })
     },
     toggleSelectionMode() {
@@ -409,7 +422,7 @@ export default {
       if (!tx.source_id && !this.isSharedLedger) {
         itemList.unshift('编辑流水')
       }
-      if (!tx.source_id && this.targetLedgers.length > 0 && (tx.op_type === 'expense' || tx.op_type === 'income')) {
+      if (!tx.source_id && this.targetLedgers.length > 0 && ['expense', 'income', 'transfer'].includes(tx.op_type)) {
         itemList.unshift('同步到账本')
       }
       uni.showActionSheet({

@@ -58,6 +58,18 @@ for (const file of walk(pagesRoot, '.js')) {
   if (/getPhoneNumber|wechat-phone/.test(source)) {
     problems.push(`${file}: 个人主体构建不应调用手机号授权组件`)
   }
+  const normalized = file.split(path.sep).join('/')
+  if (!normalized.endsWith('/pages/login/index.js') && /\.login\(\{provider:"weixin"/.test(source)) {
+    problems.push(`${file}: wx.login 只能由登录页的用户点击触发`)
+  }
+}
+
+for (const page of ['chat', 'record', 'list', 'report', 'profile']) {
+  const file = path.join(pagesRoot, `${page}/index.js`)
+  const source = fs.readFileSync(file, 'utf8')
+  if (/\.checkLogin\(/.test(source) || source.includes('/pages/login/index')) {
+    problems.push(`${file}: 主导航页不得在浏览阶段强制登录或跳转登录页`)
+  }
 }
 
 if (problems.length) {

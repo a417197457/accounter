@@ -27,7 +27,10 @@ wechat:
   api_base: "https://api.weixin.qq.com"
 
 ai:
-  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  # AI 总开关，默认关闭；审核通过并准备开放时再显式改为 true。
+  # 关闭后文字 AI、语音识别、激活和 AI 草稿确认均不可用。
+  enabled: false
+  base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
   api_key: "YOUR_BAILIAN_API_KEY"
   model: "qwen-max"
   # 本地 SQLite 调试可使用开发值；MySQL 生产环境必须通过环境变量注入独立随机密钥。
@@ -38,7 +41,7 @@ ai:
   activation_attempt_limit: 5
   activation_ip_attempt_limit: 30
   asr:
-    # 留空则回落对话配置
-    base_url: ""
+    # 语音与基础模型使用同一个 MaaS 兼容接口；api_key 留空则复用对话配置。
+    base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
     api_key: ""
-    model: "qwen3-asr-flash"
+    model: "qwen-audio-3.0-asr-flash"

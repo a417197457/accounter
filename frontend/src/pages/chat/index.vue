@@ -20,6 +20,7 @@
         <text class="welcome-kicker">账小鸭 AI 记账助手</text>
         <text class="welcome-title">今天花了什么？</text>
         <text class="welcome-copy">可以说一大段话拆多笔；不确定时我会追问，你接着答就行</text>
+        <text class="guest-browse-tip" v-if="!loggedIn">当前为游客浏览，发送内容时再登录</text>
         <view class="quick-list">
           <view class="quick-chip" @tap="useQuickPrompt('午餐花了25元')">午餐 25 元</view>
           <view class="quick-chip" @tap="useQuickPrompt('中午外卖35，下午打车22，晚上买菜58，都是支付宝')">一段话记三笔</view>
@@ -265,14 +266,14 @@
         </view>
       </view>
     </view>
-    <view class="input-dock locked-dock" v-else @tap="goAIEntitlement">
+    <view class="input-dock locked-dock" v-else @tap="handleLockedDock">
       <view class="locked-input">
         <view class="locked-icon">AI</view>
         <view class="locked-main">
           <text class="locked-title">{{ aiLockTitle }}</text>
           <text class="locked-copy">{{ aiLockCopy }}</text>
         </view>
-        <text class="locked-action">{{ aiLockAction }}</text>
+        <text class="locked-action" v-if="aiLockAction">{{ aiLockAction }}</text>
       </view>
     </view>
   </view>
@@ -280,7 +281,7 @@
 
 <script>
 import { get, post } from '../../common/request.js'
-import { checkLogin } from '../../common/auth.js'
+import { isLoggedIn, requireLogin } from '../../common/auth.js'
 
 const MAX_RECORD_SECS = 60
 const MAX_CHAT_HISTORY = 12
@@ -365,6 +366,7 @@ export default {
       startY: 0,
       transcribing: false,
       showPrivacy: false,
+      loggedIn: false,
       aiEntitlement: null,
       entitlementLoading: false,
       accounts: [],
@@ -383,7 +385,9 @@ export default {
   },
   computed: {
     aiAccessAllowed() {
+      if (!this.loggedIn) return false
       if (!this.aiEntitlement) return true
+      if (this.aiEntitlement.feature_enabled === false) return false
       return this.aiEntitlement.access_allowed !== false
     },
     aiRemainingDays() {
@@ -393,6 +397,13 @@ export default {
     aiNotice() {
       const entitlement = this.aiEntitlement
       if (!entitlement) return null
+      if (entitlement.feature_enabled === false) {
+        return {
+          title: 'AI 功能暂未开放',
+          copy: '手动记账、明细和报表仍可正常使用',
+          action: ''
+        }
+      }
       if (entitlement.access_allowed === false && entitlement.status !== 'expired') {
         return {
           title: '今日 AI 使用次数已达上限',
@@ -427,16 +438,22 @@ export default {
       return Boolean(this.aiNotice?.action)
     },
     aiLockTitle() {
+      if (!this.loggedIn) return '登录后开始 AI 记账'
+      if (this.aiEntitlement?.feature_enabled === false) return 'AI 功能暂未开放'
       if (this.aiEntitlement?.status === 'expired') {
         return this.aiEntitlement?.activated_at ? 'AI 权益已到期' : 'AI 试用已结束'
       }
       return '今日 AI 使用次数已达上限'
     },
     aiLockCopy() {
+      if (!this.loggedIn) return '可以先浏览功能，使用时再登录'
+      if (this.aiEntitlement?.feature_enabled === false) return '手动记账、明细和报表仍可正常使用'
       if (this.aiEntitlement?.status === 'expired') return '输入激活码后即可继续使用'
       return '普通记账功能仍可正常使用'
     },
     aiLockAction() {
+      if (!this.loggedIn) return '去登录'
+      if (this.aiEntitlement?.feature_enabled === false) return ''
       return this.aiEntitlement?.status === 'expired' ? '去激活' : '查看权益'
     },
     editorOperationIndex() {
@@ -527,15 +544,16 @@ export default {
     }
   },
   onLoad() {
-    checkLogin()
-    this.loadAIEntitlement()
+    this.loggedIn = isLoggedIn()
+    if (this.loggedIn) this.loadAIEntitlement()
     // #ifdef MP-WEIXIN
     this.initMiniRecorder()
     // #endif
   },
   onShow() {
-    checkLogin()
-    this.loadAIEntitlement()
+    this.loggedIn = isLoggedIn()
+    if (this.loggedIn) this.loadAIEntitlement()
+    else this.aiEntitlement = null
   },
   onHide() {
     // #ifdef MP-WEIXIN
@@ -547,6 +565,13 @@ export default {
     }
   },
   methods: {
+    handleLockedDock() {
+      if (!this.loggedIn) {
+        requireLogin('登录后即可使用文字或语音 AI 记账')
+        return
+      }
+      if (this.aiLockAction) this.goAIEntitlement()
+    },
     copyMessage(value) {
       const content = String(value || '').trim()
       if (!content) return
@@ -571,12 +596,13 @@ export default {
       uni.switchTab({ url: '/pages/profile/index' })
     },
     ensureAIAccess() {
+      if (!this.loggedIn) return requireLogin('登录后即可使用文字或语音 AI 记账')
       if (this.aiAccessAllowed) return true
       uni.showToast({ title: this.aiLockTitle, icon: 'none' })
       return false
     },
     handleAIError(err) {
-      if (err?.code === 'AI_ACCESS_EXPIRED' || err?.code === 'AI_DAILY_LIMIT_REACHED') {
+      if (err?.code === 'AI_DISABLED' || err?.code === 'AI_ACCESS_EXPIRED' || err?.code === 'AI_DAILY_LIMIT_REACHED') {
         this.loadAIEntitlement()
         return err.message || this.aiLockTitle
       }
@@ -1186,6 +1212,14 @@ export default {
   font-size: 13px;
   text-align: center;
   padding: 0 12px;
+}
+.guest-browse-tip {
+  margin-top: 12px;
+  padding: 7px 12px;
+  color: #5f776f;
+  background: #eef7f3;
+  border-radius: 999px;
+  font-size: 11px;
 }
 .quick-list {
   margin-top: 24px;

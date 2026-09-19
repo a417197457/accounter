@@ -76,7 +76,7 @@ func main() {
 		c.JSON(200, gin.H{
 			"status":   "ok",
 			"database": true,
-			"ai":       cfg.AI.APIKey != "" && cfg.AI.APIKey != "YOUR_BAILIAN_API_KEY",
+			"ai":       cfg.AI.Enabled && cfg.AI.APIKey != "" && cfg.AI.APIKey != "YOUR_BAILIAN_API_KEY",
 		})
 	})
 
@@ -212,7 +212,9 @@ func main() {
 	log.Printf("服务器启动在 %s", addr)
 	log.Printf("环境: %s", map[bool]string{true: "开发", false: "生产"}[cfg.IsDev()])
 	log.Printf("数据库: %s", cfg.DB.Driver)
-	if cfg.AI.APIKey == "" || cfg.AI.APIKey == "YOUR_BAILIAN_API_KEY" {
+	if !cfg.AI.Enabled {
+		log.Printf("AI 功能已通过配置关闭")
+	} else if cfg.AI.APIKey == "" || cfg.AI.APIKey == "YOUR_BAILIAN_API_KEY" {
 		log.Printf("警告: AI API Key 未配置，AI 功能不可用")
 	}
 

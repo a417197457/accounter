@@ -1,6 +1,6 @@
 {
   "name": "accounter-frontend",
-  "version": "1.0.0",
+  "version": "1.0.9",
   "description": "账小鸭 AI 中文记账 App 前端",
   "scripts": {
     "dev:h5": "uni",

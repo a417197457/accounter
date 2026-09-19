@@ -10,7 +10,7 @@
 6. 安装 `deploy/accounter.service`，执行 `systemctl daemon-reload && systemctl enable --now accounter`。
 7. 替换 Nginx 模板中的域名和证书路径，检查后重载 Nginx。
 8. 先验证 `https://域名/health`、网页注册/登录/记账/报表，再构建小程序正式包。
-9. 小程序正式构建：`VITE_API_BASE_URL=https://域名 pnpm build:release:mp-weixin`，导入 `frontend/dist/build/mp-weixin` 上传体验版。
+9. 小程序正式构建前先递增仓库根目录 `VERSION`，并同步 `frontend/package.json` 与 `frontend/src/manifest.json`；再执行 `VITE_API_BASE_URL=https://域名 pnpm build:release:mp-weixin`，导入 `frontend/dist/build/mp-weixin` 上传体验版。构建脚本会拒绝版本记录不一致。
 
 ## 后续一键发布
 

@@ -280,6 +280,112 @@ func TestPushAndSourceUpdatePreservePaymentRoute(t *testing.T) {
 	}
 }
 
+func TestTransferCanSyncAndKeepsBothAccountBalances(t *testing.T) {
+	db, err := repository.NewDB(&config.Config{
+		DB:     config.DBConfig{Driver: "sqlite"},
+		SQLite: config.SQLiteConfig{Path: "file:transaction_transfer_sync_test?mode=memory&cache=shared"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{Username: "t_transfer_sync", PasswordHash: "x", Nickname: "转账同步测试"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	personal := createSyncTestLedger(t, db, user.ID, "个人", model.LedgerTypePersonal)
+	family := createSyncTestLedger(t, db, user.ID, "家庭", model.LedgerTypeFamily)
+
+	sourceSavings := model.Account{LedgerID: personal.ID, UserID: user.ID, Name: "招商储蓄卡", Type: "savings", Balance: decimal.NewFromInt(2000)}
+	sourceCredit := model.Account{LedgerID: personal.ID, UserID: user.ID, Name: "中信信用卡", Type: "credit", Balance: decimal.NewFromInt(500)}
+	targetSavings := model.Account{LedgerID: family.ID, UserID: user.ID, Name: "招商储蓄卡", Type: "savings", Balance: decimal.NewFromInt(1000)}
+	targetCredit := model.Account{LedgerID: family.ID, UserID: user.ID, Name: "中信信用卡", Type: "credit", Balance: decimal.NewFromInt(300)}
+	for _, account := range []*model.Account{&sourceSavings, &sourceCredit, &targetSavings, &targetCredit} {
+		if err := db.Create(account).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	txSvc := &TransactionService{db: db}
+	occurredAt := time.Date(2026, 9, 19, 20, 30, 0, 0, time.Local)
+	sourceCreditID := sourceCredit.ID
+	source, err := txSvc.Create(personal.ID, user.ID, &model.Transaction{
+		AccountID: sourceSavings.ID, ToAccountID: &sourceCreditID, OpType: "transfer",
+		Amount: decimal.NewFromInt(100), Remark: "信用卡还款", OccurredAt: occurredAt,
+	})
+	if err != nil {
+		t.Fatalf("create transfer: %v", err)
+	}
+
+	copyTx, err := txSvc.PushToLedger(personal.ID, source.ID, family.ID, user.ID)
+	if err != nil {
+		t.Fatalf("push transfer: %v", err)
+	}
+	if copyTx.OpType != "transfer" || copyTx.AccountID != targetSavings.ID || copyTx.ToAccountID == nil || *copyTx.ToAccountID != targetCredit.ID {
+		t.Fatalf("unexpected transfer copy: op=%s from=%d to=%v", copyTx.OpType, copyTx.AccountID, copyTx.ToAccountID)
+	}
+	assertAccountBalance(t, db, targetSavings.ID, "900")
+	assertAccountBalance(t, db, targetCredit.ID, "200")
+
+	updated, err := txSvc.Update(personal.ID, user.ID, source.ID, &model.Transaction{
+		AccountID: sourceSavings.ID, ToAccountID: &sourceCreditID, OpType: "transfer",
+		Amount: decimal.NewFromInt(150), Remark: "修改后的信用卡还款", OccurredAt: occurredAt,
+	})
+	if err != nil {
+		t.Fatalf("update source transfer: %v", err)
+	}
+	if !updated.Amount.Equal(decimal.NewFromInt(150)) {
+		t.Fatalf("updated amount=%s", updated.Amount)
+	}
+	var updatedCopy model.Transaction
+	if err := db.First(&updatedCopy, copyTx.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updatedCopy.ToAccountID == nil || *updatedCopy.ToAccountID != targetCredit.ID || !updatedCopy.Amount.Equal(decimal.NewFromInt(150)) {
+		t.Fatalf("updated copy lost transfer route: to=%v amount=%s", updatedCopy.ToAccountID, updatedCopy.Amount)
+	}
+	assertAccountBalance(t, db, targetSavings.ID, "850")
+	assertAccountBalance(t, db, targetCredit.ID, "150")
+
+	if err := txSvc.Delete(personal.ID, user.ID, source.ID); err != nil {
+		t.Fatalf("delete source transfer: %v", err)
+	}
+	assertAccountBalance(t, db, targetSavings.ID, "1000")
+	assertAccountBalance(t, db, targetCredit.ID, "300")
+
+	second, err := txSvc.Create(personal.ID, user.ID, &model.Transaction{
+		AccountID: sourceSavings.ID, ToAccountID: &sourceCreditID, OpType: "transfer",
+		Amount: decimal.NewFromInt(80), Remark: "整月同步还款", OccurredAt: occurredAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	monthResult, err := txSvc.PushMonth(personal.ID, "2026-09", family.ID, user.ID)
+	if err != nil {
+		t.Fatalf("push transfer month: %v", err)
+	}
+	if monthResult.Pushed != 1 || monthResult.Skipped != 0 {
+		t.Fatalf("unexpected month result: %+v", monthResult)
+	}
+	var monthCopy model.Transaction
+	if err := db.First(&monthCopy, "source_id = ? AND ledger_id = ?", second.ID, family.ID).Error; err != nil {
+		t.Fatalf("month transfer copy missing: %v", err)
+	}
+	if monthCopy.ToAccountID == nil || *monthCopy.ToAccountID != targetCredit.ID {
+		t.Fatalf("month transfer target=%v, want %d", monthCopy.ToAccountID, targetCredit.ID)
+	}
+}
+
+func assertAccountBalance(t *testing.T, db *gorm.DB, accountID uint, expected string) {
+	t.Helper()
+	var account model.Account
+	if err := db.First(&account, accountID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !account.Balance.Equal(decimal.RequireFromString(expected)) {
+		t.Fatalf("account %d balance=%s, want %s", accountID, account.Balance, expected)
+	}
+}
+
 func TestClearSharedLedgerOwnerOnly(t *testing.T) {
 	db, err := repository.NewDB(&config.Config{
 		DB:     config.DBConfig{Driver: "sqlite"},

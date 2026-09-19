@@ -15,6 +15,14 @@
         <text class="logout-link" @click="logout">退出</text>
       </view>
     </view>
+    <view class="card guest-user-card" v-else>
+      <view class="avatar guest-avatar">游</view>
+      <view class="user-info">
+        <text class="nickname">游客浏览</text>
+        <text class="username">可以先了解功能，需要保存个人数据时再登录</text>
+      </view>
+      <button class="guest-login-btn" @click="requestLogin()">微信登录</button>
+    </view>
 
     <view class="section">
       <view class="section-header">
@@ -25,7 +33,7 @@
         <view class="manage-icon mint">本</view>
         <view class="manage-main">
           <text class="manage-title">账本管理</text>
-          <text class="manage-copy">个人账本 + {{ sharedLedgerCount }} 个其他账本</text>
+          <text class="manage-copy">{{ loggedIn ? `个人账本 + ${sharedLedgerCount} 个其他账本` : '登录后自动创建个人账本' }}</text>
         </view>
         <text class="manage-chevron">›</text>
       </view>
@@ -62,7 +70,8 @@
           <view class="manage-icon blue">AI</view>
           <view class="manage-main">
             <text class="manage-title">AI 记账方式</text>
-            <text class="manage-copy" v-if="bookkeepingMode === 'strict'">精确模式 · 未说明账户时会追问</text>
+            <text class="manage-copy" v-if="!loggedIn">支持便捷模式与精确账户模式</text>
+            <text class="manage-copy" v-else-if="bookkeepingMode === 'strict'">精确模式 · 未说明账户时会追问</text>
             <text class="manage-copy" v-else>便捷模式 · 默认 {{ defaultAccountLabel || '账户' }}</text>
           </view>
           <text class="manage-chevron">›</text>
@@ -275,12 +284,16 @@
             <text class="entitlement-state-copy">{{ aiEntitlementDetail }}</text>
           </view>
         </view>
-        <view class="entitlement-usage" v-if="aiEntitlement">
+        <view class="entitlement-usage" v-if="aiEntitlement && aiEntitlement.feature_enabled !== false">
           <text>今日使用</text>
           <text>{{ aiEntitlement.daily_used || 0 }} / {{ aiEntitlement.daily_limit || 0 }} 次</text>
         </view>
         <view class="activation-section entitlement-loading" v-if="!aiEntitlement">
           <text class="activation-tip">正在读取权益状态，请稍候...</text>
+        </view>
+        <view class="activation-section" v-else-if="aiEntitlement.feature_enabled === false">
+          <text class="activation-title">AI 功能暂未开放</text>
+          <text class="activation-tip">管理员开启后即可继续使用，普通记账功能不受影响。</text>
         </view>
         <view class="activation-section" v-else-if="aiEntitlement.status !== 'activated'">
           <text class="activation-title">激活 AI 功能</text>
@@ -362,11 +375,13 @@
 import { get, post, put, del } from '../../common/request.js'
 import { BASE_URL, TOKEN_KEY, USER_KEY } from '../../common/config.js'
 import { accountMoneyText } from '../../common/money.js'
+import { isLoggedIn, requireLogin } from '../../common/auth.js'
 
 export default {
   data() {
     return {
       user: null,
+      loggedIn: false,
       ledgers: [],
       accounts: [],
       categories: { expense: [], income: [] },
@@ -481,6 +496,8 @@ export default {
       return this.aiEntitlement?.status === 'expired' && Boolean(this.aiEntitlement?.activated_at)
     },
     aiEntitlementCopy() {
+      if (!this.loggedIn) return '登录后查看试用与激活状态'
+      if (this.aiEntitlement?.feature_enabled === false) return '暂未开放 · 普通记账不受影响'
       const status = this.aiEntitlement?.status
       if (status === 'activated' && this.aiHasTimedActivation) return `已激活 · 剩余 ${this.aiRemainingDays} 天`
       if (status === 'activated') return '已永久激活'
@@ -491,6 +508,7 @@ export default {
       return '正在读取权益状态'
     },
     aiEntitlementTitle() {
+      if (this.aiEntitlement?.feature_enabled === false) return 'AI 功能暂未开放'
       const status = this.aiEntitlement?.status
       if (status === 'activated' && this.aiHasTimedActivation) return `AI 功能使用中，剩余 ${this.aiRemainingDays} 天`
       if (status === 'activated') return 'AI 功能已永久激活'
@@ -501,6 +519,7 @@ export default {
       return '正在读取'
     },
     aiEntitlementDetail() {
+      if (this.aiEntitlement?.feature_enabled === false) return '管理员开启后即可继续使用，现有权益不会丢失'
       const status = this.aiEntitlement?.status
       if (status === 'activated' && this.aiHasTimedActivation) return `有效期至 ${this.formatEntitlementTime(this.aiEntitlement?.activated_expires_at)}`
       if (status === 'activated') return '文字记账与语音识别均可继续使用'
@@ -517,6 +536,15 @@ export default {
     }
   },
   onShow() {
+    this.loggedIn = isLoggedIn()
+    if (!this.loggedIn) {
+      this.user = null
+      this.ledgers = []
+      this.accounts = []
+      this.aiEntitlement = null
+      this.$nextTick(() => setTimeout(() => this.fixInputs(), 100))
+      return
+    }
     this.loadUser().then(() => {
       if (uni.getStorageSync('open_wechat_profile') === '1') {
         uni.removeStorageSync('open_wechat_profile')
@@ -535,13 +563,19 @@ export default {
     this.$nextTick(() => setTimeout(() => this.fixInputs(), 100))
   },
   methods: {
+    requestLogin(message = '登录后即可保存和管理你的个人记账数据') {
+      return requireLogin(message)
+    },
     goLedgerManagement() {
+      if (!this.loggedIn) return this.requestLogin('登录后即可查看和管理个人账本')
       uni.navigateTo({ url: '/pages/ledger/index' })
     },
     goAccountManagement() {
+      if (!this.loggedIn) return this.requestLogin('登录后即可管理支付账户和银行卡')
       uni.navigateTo({ url: '/pages/account/index' })
     },
     goCategoryManagement() {
+      if (!this.loggedIn) return this.requestLogin('登录后即可管理自己的记账分类')
       uni.navigateTo({ url: '/pages/category/index' })
     },
     formatMoney(v) {
@@ -652,9 +686,7 @@ export default {
         const result = await get('/ledgers')
         this.ledgers = result || []
       } catch (err) {
-        if (err.message && err.message.includes('未登录')) {
-          uni.redirectTo({ url: '/pages/login/index' })
-        }
+        if (err?.code !== 'UNAUTHORIZED') console.error('加载账本失败:', err)
       }
     },
     async loadAccounts() {
@@ -685,6 +717,7 @@ export default {
       }
     },
     async openAIEntitlement() {
+      if (!this.loggedIn) return this.requestLogin('登录后即可查看 AI 试用和激活状态')
       await this.loadAIEntitlement()
       this.activationCode = ''
       this.showAIEntitlement = true
@@ -723,6 +756,7 @@ export default {
       this.defaultPaymentAccountID = null
     },
     async openBookkeepingSettings() {
+      if (!this.loggedIn) return this.requestLogin('登录后即可设置 AI 默认记账方式')
       if (!this.accounts.length) await this.loadAccounts()
       this.ensureDefaultAccount()
       this.showBookkeepingSettings = true
@@ -952,7 +986,10 @@ export default {
     logout() {
       uni.removeStorageSync(TOKEN_KEY)
       uni.removeStorageSync(USER_KEY)
-      uni.redirectTo({ url: '/pages/login/index' })
+      this.loggedIn = false
+      this.user = null
+      uni.showToast({ title: '已退出，可继续浏览', icon: 'none' })
+      uni.switchTab({ url: '/pages/chat/index' })
     },
     showCreateModal() {
       this.newLedgerName = ''
@@ -1084,6 +1121,20 @@ export default {
   background: #e8f7f1;
   border-color: #d6eee5;
 }
+.guest-user-card { display: flex; align-items: center; gap: 12px; }
+.guest-avatar { color: #789087; background: #edf3f0; }
+.guest-login-btn {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 7px 14px;
+  color: #fff;
+  background: #42c39c;
+  border: 0;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 24px;
+}
+.guest-login-btn::after { border: 0; }
 .avatar {
   width: 52px;
   height: 52px;

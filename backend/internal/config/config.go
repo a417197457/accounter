@@ -75,6 +75,7 @@ type JWTConfig struct {
 
 // AIConfig AI 配置（对话和语音分离）
 type AIConfig struct {
+	Enabled                  bool
 	BaseURL                  string
 	APIKey                   string
 	Model                    string
@@ -115,9 +116,13 @@ func Load() *Config {
 	v.SetDefault("db.driver", "sqlite")
 	v.SetDefault("jwt.secret", "dev-secret")
 	v.SetDefault("jwt.expire", "168h")
-	v.SetDefault("ai.base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+	// 默认关闭 AI，避免首次部署或小程序审核环境在未明确授权时暴露 AI 能力。
+	// 需要启用时必须通过 config.yaml 或 AI_ENABLED=true 显式开启。
+	v.SetDefault("ai.enabled", false)
+	v.SetDefault("ai.base_url", "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1")
 	v.SetDefault("ai.model", "qwen-max")
-	v.SetDefault("ai.asr.model", "qwen3-asr-flash")
+	v.SetDefault("ai.asr.base_url", "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1")
+	v.SetDefault("ai.asr.model", "qwen-audio-3.0-asr-flash")
 	v.SetDefault("ai.activation_secret", "dev-activation-secret")
 	v.SetDefault("ai.trial_days", 7)
 	v.SetDefault("ai.trial_daily_limit", 50)
@@ -162,6 +167,7 @@ func Load() *Config {
 			Expire: v.GetDuration("jwt.expire"),
 		},
 		AI: AIConfig{
+			Enabled:                  v.GetBool("ai.enabled"),
 			BaseURL:                  v.GetString("ai.base_url"),
 			APIKey:                   v.GetString("ai.api_key"),
 			Model:                    v.GetString("ai.model"),
@@ -225,6 +231,7 @@ func applyEnvOverrides(v *viper.Viper) {
 		"SQLITE_PATH":                    "sqlite.path",
 		"JWT_SECRET":                     "jwt.secret",
 		"JWT_EXPIRE":                     "jwt.expire",
+		"AI_ENABLED":                     "ai.enabled",
 		"AI_BASE_URL":                    "ai.base_url",
 		"DASHSCOPE_API_KEY":              "ai.api_key",
 		"AI_MODEL":                       "ai.model",
@@ -294,6 +301,9 @@ func (c *Config) ValidateProduction() error {
 	}
 	if len(c.JWT.Secret) < 32 || c.JWT.Secret == "dev-secret" || c.JWT.Secret == "change-me-in-production" {
 		return fmt.Errorf("生产环境 JWT_SECRET 必须是至少 32 位的随机字符串")
+	}
+	if !c.AI.Enabled {
+		return nil
 	}
 	if len(c.AI.ActivationSecret) < 32 || c.AI.ActivationSecret == "dev-activation-secret" || strings.HasPrefix(c.AI.ActivationSecret, "CHANGE_") {
 		return fmt.Errorf("生产环境 AI_ACTIVATION_SECRET 必须是至少 32 位的随机字符串")

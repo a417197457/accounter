@@ -27,6 +27,17 @@ func NewAIHandler(aiService *ai.Service) *AIHandler {
 	}
 }
 
+func (h *AIHandler) ensureAIEnabled(c *gin.Context) bool {
+	if h.aiService.IsEnabled() {
+		return true
+	}
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"error": "AI功能暂未开放",
+		"code":  "AI_DISABLED",
+	})
+	return false
+}
+
 func writeAIAccessError(c *gin.Context, err error) bool {
 	switch {
 	case errors.Is(err, service.ErrAIAccessExpired):
@@ -51,6 +62,9 @@ type ChatRequest struct {
 
 // Chat AI 对话记账
 func (h *AIHandler) Chat(c *gin.Context) {
+	if !h.ensureAIEnabled(c) {
+		return
+	}
 	ledgerID := middleware.LedgerID(c)
 	userID := middleware.UserID(c)
 	if _, err := h.entitlementService.CheckAccess(userID); writeAIAccessError(c, err) {
@@ -84,6 +98,9 @@ type TranscribeRequest struct {
 
 // Transcribe 语音识别
 func (h *AIHandler) Transcribe(c *gin.Context) {
+	if !h.ensureAIEnabled(c) {
+		return
+	}
 	userID := middleware.UserID(c)
 	if _, err := h.entitlementService.CheckAccess(userID); writeAIAccessError(c, err) {
 		return
@@ -120,6 +137,10 @@ func (h *AIHandler) Entitlement(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取AI权益失败"})
 		return
 	}
+	view.FeatureEnabled = h.aiService.IsEnabled()
+	if !view.FeatureEnabled {
+		view.AccessAllowed = false
+	}
 	c.JSON(http.StatusOK, gin.H{"data": view})
 }
 
@@ -129,6 +150,9 @@ type ActivateAIRequest struct {
 
 // Activate 使用一次性激活码限时或永久开通当前账号的 AI 权益。
 func (h *AIHandler) Activate(c *gin.Context) {
+	if !h.ensureAIEnabled(c) {
+		return
+	}
 	var req ActivateAIRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写有效激活码", "code": "AI_ACTIVATION_CODE_INVALID"})
@@ -159,6 +183,9 @@ type ConfirmRequest struct {
 
 // Confirm 确认草稿落库（仅个人账本）
 func (h *AIHandler) Confirm(c *gin.Context) {
+	if !h.ensureAIEnabled(c) {
+		return
+	}
 	ledgerID := middleware.LedgerID(c)
 	userID := middleware.UserID(c)
 
@@ -217,6 +244,7 @@ func (h *AIHandler) Confirm(c *gin.Context) {
 func (h *AIHandler) Settings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
+			"enabled":    h.aiService.IsEnabled(),
 			"configured": h.aiService.IsConfigured(),
 		},
 	})

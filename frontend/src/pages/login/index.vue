@@ -25,6 +25,7 @@
           :disabled="loading"
           @click="handleWechatLogin"
         >微信登录</button>
+        <button class="browse-btn" @click="continueBrowsing">暂不登录，继续浏览</button>
         <text class="privacy-copy">微信登录仅用于识别账号；使用语音前会单独征得授权</text>
       </view>
       <!-- #endif -->
@@ -85,6 +86,7 @@
             {{ isLogin ? '没有账号？去注册' : '已有账号？去登录' }}
           </text>
         </view>
+        <button class="browse-btn" @click="continueBrowsing">暂不登录，继续浏览</button>
       </view>
       <!-- #endif -->
       </view>
@@ -95,6 +97,7 @@
 <script>
 import { post } from '../../common/request.js'
 import { TOKEN_KEY, USER_KEY } from '../../common/config.js'
+import { LOGIN_RETURN_KEY } from '../../common/auth.js'
 
 export default {
   data() {
@@ -108,11 +111,7 @@ export default {
       }
     }
   },
-  onLoad() {
-    // 清除可能存在的过期 token
-    uni.removeStorageSync(TOKEN_KEY)
-    uni.removeStorageSync(USER_KEY)
-  },
+  onLoad() {},
   mounted() {
     // uni-app input 组件在 H5 下：样式只作用到外层 uni-input，内部真实 input 高度为 0。
     // 需要手动给内部 input 设置高度，否则无法点击/输入。
@@ -199,7 +198,15 @@ export default {
       uni.showToast({ title: message, icon: 'success' })
       const needsWechatProfile = String(user?.username || '').startsWith('wx_') && (!user?.avatar_url || user?.nickname === '微信用户')
       if (needsWechatProfile) uni.setStorageSync('open_wechat_profile', '1')
-      setTimeout(() => uni.switchTab({ url: needsWechatProfile ? '/pages/profile/index' : '/pages/chat/index' }), 500)
+      const returnRoute = uni.getStorageSync(LOGIN_RETURN_KEY)
+      uni.removeStorageSync(LOGIN_RETURN_KEY)
+      const target = needsWechatProfile ? 'pages/profile/index' : (returnRoute || 'pages/chat/index')
+      setTimeout(() => uni.switchTab({ url: `/${target}` }), 500)
+    },
+    continueBrowsing() {
+      const returnRoute = uni.getStorageSync(LOGIN_RETURN_KEY) || 'pages/chat/index'
+      uni.removeStorageSync(LOGIN_RETURN_KEY)
+      uni.switchTab({ url: `/${returnRoute}` })
     }
   }
 }
@@ -353,6 +360,17 @@ export default {
   color: #36b88f;
   cursor: pointer;
 }
+.browse-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 12px;
+  color: #657a73;
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+  line-height: 24px;
+}
+.browse-btn::after { border: 0; }
 .wechat-heading {
   text-align: center;
 }

@@ -43,7 +43,7 @@
         <text class="detail-value">{{ selectedAccountLabel || '请选择' }}</text>
         <text class="chevron">›</text>
       </view>
-      <view class="detail-row" v-if="form.op_type === 'transfer'" @click="showTargetAccount = true">
+      <view class="detail-row" v-if="form.op_type === 'transfer'" @click="showTargetAccountModal">
         <view class="detail-icon mint"><image src="/static/ui/arrow-in.svg" mode="aspectFit" /></view>
         <text class="detail-label">转入</text>
         <text class="detail-value">{{ selectedTargetAccount?.name || '请选择' }}</text>
@@ -83,7 +83,7 @@
       </view>
     </view>
 
-    <button class="btn btn-primary submit-btn" @click="handleSubmit" :loading="loading">{{ editingID ? '保存修改' : '保存记录' }}</button>
+    <button class="btn btn-primary submit-btn" @click="handleSubmit" :loading="loading">{{ !loggedIn ? '登录后保存' : (editingID ? '保存修改' : '保存记录') }}</button>
     <button class="btn btn-secondary cancel-edit-btn" v-if="editingID" @click="cancelEditing">取消编辑</button>
 
     <view class="modal" v-if="showAccount" @tap="showAccount = false">
@@ -173,7 +173,7 @@
 
 <script>
 import { get, post, put } from '../../common/request.js'
-import { checkLogin } from '../../common/auth.js'
+import { isLoggedIn, requireLogin } from '../../common/auth.js'
 import { accountMoneyText } from '../../common/money.js'
 
 const EDIT_TRANSACTION_KEY = 'edit_transaction'
@@ -214,6 +214,7 @@ export default {
       showAccount: false,
       showTargetAccount: false,
       showCategory: false,
+      loggedIn: false,
       openRecordCats: {}
     }
   },
@@ -262,13 +263,16 @@ export default {
       return this.accounts.filter(account => account.id !== this.form.account_id)
     }
   },
-  onLoad() {
-    checkLogin()
-  },
+  onLoad() {},
   async onShow() {
+    this.loggedIn = isLoggedIn()
     const editTransaction = uni.getStorageSync(EDIT_TRANSACTION_KEY)
     if (editTransaction) uni.removeStorageSync(EDIT_TRANSACTION_KEY)
-    await this.loadData()
+    if (this.loggedIn) await this.loadData()
+    else {
+      this.accounts = []
+      this.categories = { expense: [], income: [] }
+    }
     if (editTransaction) this.startEditing(editTransaction)
     this.$nextTick(() => setTimeout(() => this.fixInputHeight(), 100))
   },
@@ -335,13 +339,16 @@ export default {
           children: c.children || []
         }))
       } catch (err) {
-        if (err.message && err.message.includes('未登录')) {
-          uni.redirectTo({ url: '/pages/login/index' })
-        }
+        if (err?.code !== 'UNAUTHORIZED') console.error('加载记账选项失败:', err)
       }
     },
     showAccountModal() {
+      if (!this.loggedIn) return requireLogin('登录后即可选择账户并保存这笔记录')
       this.showAccount = true
+    },
+    showTargetAccountModal() {
+      if (!this.loggedIn) return requireLogin('登录后即可选择转入账户并保存转账')
+      this.showTargetAccount = true
     },
     selectAccountOption(option) {
       this.selectedAccount = option.account
@@ -360,6 +367,7 @@ export default {
       this.showTargetAccount = false
     },
     showCategoryModal() {
+      if (!this.loggedIn) return requireLogin('登录后即可选择自己的记账分类')
       this.openRecordCats = {}
       this.showCategory = true
     },
@@ -431,6 +439,10 @@ export default {
       uni.switchTab({ url: '/pages/list/index' })
     },
     async handleSubmit() {
+      if (!this.loggedIn) {
+        requireLogin('登录后即可保存这笔记录，当前填写内容会保留在页面中')
+        return
+      }
       if (!this.form.account_id) {
         uni.showToast({ title: '请选择账户', icon: 'none' })
         return

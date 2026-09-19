@@ -23,7 +23,7 @@
 | 后端    | Go 1.26.5（`toolchain` 已锁定）+ Gin + GORM。生产 MySQL；开发用纯 Go SQLite（无 CGO）      |
 | 前端    | uni-app 5.23 alpha（Vue3，Options API），一套代码出 H5 + 微信小程序；Vue/Vite 已固定版本            |
 | AI 对话 | 阿里云百炼 DashScope，OpenAI 兼容接口，`github.com/sashabaranov/go-openai` + Function Calling    |
-| AI 语音 | 百炼 `qwen3-asr-flash`，走 OpenAI 兼容 `chat/completions` + `input_audio`（**非** Whisper 接口） |
+| AI 语音 | 百炼 `qwen-audio-3.0-asr-flash`，走 OpenAI 兼容 `chat/completions` + `input_audio`（**非** Whisper 接口） |
 | 报表    | `github.com/xuri/excelize/v2`                                                         |
 | 认证    | `github.com/golang-jwt/jwt/v5`                                                        |
 | 金额    | `github.com/shopspring/decimal`（DB 用 `decimal(18,2)`）                                 |
@@ -196,17 +196,18 @@ server { listen 80; server_name accounter.yourdomain.com; return 301 https://$ho
 
 ```yaml
 ai:
-  base_url: "..."       # 对话/记账/查询模型
+  enabled: false         # 默认关闭；true 时才开放文字 AI、语音、激活及 AI 草稿确认
+  base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
   api_key: "..."
   model: "qwen-max"
   asr:                  # 语音识别（可与对话不同的 base_url/api_key）
-    base_url: ""        # 留空则复用对话模型的 base_url
+    base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
     api_key: ""         # 留空则复用对话模型的 api_key
-    model: "qwen3-asr-flash"
+    model: "qwen-audio-3.0-asr-flash"
 ```
 
-环境变量：`DB_DRIVER DB_DSN SQLITE_PATH DB_HOST/PORT/USER/PASSWORD/NAME JWT_SECRET JWT_EXPIRE SERVER_PORT CORS_ALLOWED_ORIGINS DASHSCOPE_API_KEY AI_BASE_URL AI_MODEL AI_ASR_BASE_URL AI_ASR_API_KEY AI_ASR_MODEL WECHAT_APP_ID WECHAT_APP_SECRET WECHAT_API_BASE`。
-默认值：driver=sqlite、port=8080、jwt.expire=168h、ai.model=qwen-max、asr.model=qwen3-asr-flash、asr.base_url/key 回落对话配置。MySQL 模式会拒绝短 JWT 或开发密钥启动。
+环境变量：`DB_DRIVER DB_DSN SQLITE_PATH DB_HOST/PORT/USER/PASSWORD/NAME JWT_SECRET JWT_EXPIRE SERVER_PORT CORS_ALLOWED_ORIGINS AI_ENABLED DASHSCOPE_API_KEY AI_BASE_URL AI_MODEL AI_ASR_BASE_URL AI_ASR_API_KEY AI_ASR_MODEL WECHAT_APP_ID WECHAT_APP_SECRET WECHAT_API_BASE`。
+默认值：driver=sqlite、port=8080、jwt.expire=168h、`AI_ENABLED=false`、ai.model=qwen-max、asr.model=qwen-audio-3.0-asr-flash，对话与 ASR 默认同源到 token-plan MaaS；ASR key 为空时复用对话 key。AI 必须通过 `config.yaml` 或环境变量显式开启；MySQL 模式会拒绝短 JWT 或开发密钥启动（AI 关闭时不校验 AI 激活配置）。
 
 ---
 
@@ -358,9 +359,10 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 
 ### 7.8 语音识别 `ai/asr.go`
 
-- **百炼不支持 Whisper 风格 `/audio/transcriptions`（404）**。走 OpenAI 兼容 `chat/completions`，body：`{model:qwen3-asr-flash, messages:[{role:user, content:[{type:"input_audio", input_audio:{data:"data:audio/<fmt>;base64,<b64>"}}]}]}`，返回 `choices[0].message.content` 即文本。
+- **百炼不支持 Whisper 风格 `/audio/transcriptions`（404）**。走 OpenAI 兼容 `chat/completions`，body：`{model:qwen-audio-3.0-asr-flash, messages:[{role:user, content:[{type:"input_audio", input_audio:{data:"data:audio/<fmt>;base64,<b64>"}}]}]}`，返回 `choices[0].message.content` 即文本。
 - `Transcribe(ctx, audioB64, format)` 用 `net/http` 直接调（**不经 go-openai**，因 data URI 结构特殊），复用 asr 那套 base_url/key/model；`audioMime()` 映射格式→MIME（mp3/wav/webm/m4a/aac/ogg…）。
 - ASR 端点路径注意：百炼「专属部署/MaaS」域名（`llm-xxx.cn-beijing.maas.aliyuncs.com`）兼容路径是 `**/compatible-mode/v1**`，不是 `/api/v1`。
+- **上线前必须验证模型可调用**：请求 `GET {AI_ASR_BASE_URL}/models` 确认返回中包含 `qwen-audio-3.0-asr-flash`，并使用真实录音完成一次识别冒烟测试；当前 `token-plan` 已确认提供该模型。
 
 ### 7.9 AI 记账偏好 `service/bookkeeping_preference.go` + `handler/bookkeeping_preference.go`
 
@@ -374,8 +376,8 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 - `LedgerService`：`ListForUser / Create(邀请码) / Join / Members / RemoveMember / Leave / Role / IsPersonal / PersonalLedgerID`。邀请码 `genInviteCode` 用 `crypto/rand` 生成 6 位（去掉易混字符）。
 - **推送/同步**（`transaction.go`）：
   - `mapAccountToLedger` / `mapCategoryToLedger`：按**名称**把账户/分类映射到目标账本（账户找不到用第一个，分类找不到留空）。
-  - `PushToLedger(srcLedgerID, srcID, targetLedgerID, userID)`：复制一份到家庭/旅游/礼账账本，`SourceID=srcID`，防重复（目标已有该 source 则拒绝）。转账不支持推送。
-  - `PushMonth(srcLedgerID, month, targetLedgerID, userID)`：遍历该月 income/expense 流水逐笔 PushToLedger，返回 `{pushed, skipped}`。
+  - `PushToLedger(srcLedgerID, srcID, targetLedgerID, userID)`：复制一份到家庭/旅游/礼账账本，`SourceID=srcID`，防重复（目标已有该 source 则拒绝）。支持收入、支出和转账/还款；转账会分别映射目标账本中的转出、转入账户，保持账户类型和两端不同，仍不计入收支统计。
+  - `PushMonth(srcLedgerID, month, targetLedgerID, userID)`：遍历该月 income/expense/transfer 流水逐笔 PushToLedger，返回 `{pushed, skipped}`。
   - `syncCopies(src)`：改源后同步所有副本（重映射账户/分类 + 撤销旧余额+应用新余额）。
   - `deleteCopies(srcID)`：删源后级联删副本。
 - 副本记账人 UserID = 执行推送的人 → 家庭账本明细可显示「谁同步的」。
@@ -384,7 +386,7 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 
 ## 8. 前端要点
 
-- `**common/request.js**`：统一封装 uni.request，注入 JWT、401 跳登录、剥 `{data}`。**账本上下文按调用显式传 `options.ledgerId`**（→ 头 `X-Ledger-Id`），不传=个人账本。read 类 api（overview/trend/categoryStats/monthly/transactions/budgets/categories/setBudget/deleteBudget）都有可选 `ledgerId` 末参。**不再有全局"当前账本"注入**。
+- `**common/request.js**`：统一封装 uni.request，注入 JWT、处理 401、剥 `{data}`。游客请求收到 401 时只返回 `AUTH_REQUIRED`，**不得自动跳登录**；仅已有 token 失效时才导航到重新登录。**账本上下文按调用显式传 `options.ledgerId`**（→ 头 `X-Ledger-Id`），不传=个人账本。read 类 api（overview/trend/categoryStats/monthly/transactions/budgets/categories/setBudget/deleteBudget）都有可选 `ledgerId` 末参。**不再有全局"当前账本"注入**。
 - `**common/config.js**`：`BASE_URL`（H5 空走 vite 代理，小程序/生产填后端地址）、`TOKEN_KEY`、`USER_KEY`、`LEDGER_KEY`（已基本弃用）。
 - **页面**（`pages.json` 5 个 tab + 登录 + 账户/分类管理页）：
   - `chat` AI 记账：文字/语音 + 多轮追问（请求带近期 `history`）；一段话可多笔草稿；确认卡片可逐笔或全部保存。
@@ -394,7 +396,8 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
   - `profile` 我的：保留用户、账本、加入共享账本与管理入口；创建时可选择家庭/旅游/礼账类型；“AI 记账方式”可切换便捷/精确模式，并选择支付宝/微信余额、关联卡或直接账户作为默认支付路径。
   - `account` 账户管理（非 tab 页）：按支付渠道/资产/负债分组，展示总资产、信用卡欠款和净资产，负责账户关联与归档。
   - `category` 分类管理（非 tab 页）：独立管理一级/二级分类、折叠和图标选择。
-  - `login`：登录/注册，登录时 `removeStorageSync(LEDGER_KEY)`。
+  - `login`：微信小程序登录 / H5 登录注册；提供“暂不登录，继续浏览”，登录后返回触发登录的主功能页。
+- **游客浏览与按需登录（审核硬约束）**：5 个 tab 页不得在 `onLoad/onShow` 调用 `checkLogin()`，未登录时不得请求个人数据，也不得自动调用 `uni.login`。AI 首页展示功能说明，记一笔展示表单，明细展示隐私空状态，报表展示零数据结构，我的展示游客卡片；只有用户主动发送、保存、查看个人数据、导出或进入管理功能时，才通过 `requireLogin()` 提供“去登录 / 继续浏览”选择。`wx.login` 只能由登录页的“微信登录”按钮触发。
 - 新账本默认账户顺序（seed）：**支付宝 → 微信 → 现金 → 储蓄卡 → 信用卡**（支付宝为默认；`service/seed.go`）。
 
 ### 8.1 UI 视觉规范（H5 / 微信小程序共用）
@@ -427,7 +430,7 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 5. **GORM 查询默认带软删除作用域**（`deleted_at IS NULL`）；迁移回填软删除行需 `Unscoped()`；空结果 slice 序列化为 `null`，需在 service 里初始化为 `[]T{}`（如 `CategoryBreakdown`）。
 6. **环境变量优先级高于 config.yaml**——dev.sh 曾自动注入 `DASHSCOPE_API_KEY` 覆盖了 config.yaml 的对话 key，导致 key 与 base_url 不匹配 401。已移除 dev.sh 的注入；排查 401 先查是否有 env 覆盖。
 7. **百炼 MaaS 专属部署路径是 `/compatible-mode/v1`**，不是 `/api/v1`（后者 404）。
-8. **语音识别不能用 Whisper `/audio/transcriptions`**（百炼 404），必须走 `chat/completions` + `qwen3-asr-flash` + `input_audio` data URI（见 §7.8）。
+8. **语音识别不能用 Whisper `/audio/transcriptions`**（百炼 404），必须走 `chat/completions` + `qwen-audio-3.0-asr-flash` + `input_audio` data URI（见 §7.8）。
 
 ### 前端（多为 uni-app H5 的坑）
 
@@ -506,13 +509,14 @@ Setting     { Key(pk), Value text }  // 历史全局 KV，当前模型配置不�
 4. **内容安全审核**：AI 对话与备注属于用户输入，首版提交前应依据当前类目/审核要求确定微信内容安全 API 或阿里云内容安全方案；若审核反馈要求，优先在后端统一封装，不能把 AppSecret 放前端。
 5. **小程序包体积**：当前构建约 540KB，明显低于主包限制，首版暂不分包。每次发布仍运行微信开发者工具「代码质量/依赖分析」；接近限制后再把非 tabBar 页面迁入分包（tabBar 页面本身必须在主包）。
 6. **微信 openid 登录（当前启用）**：个人主体无手机号快速验证组件权限，登录页调用 `uni.login` 获取一次性 `code`，提交 `POST /auth/wechat {code}`；后端向微信换取可信 `openid`，按 openid 登录或自动注册，并创建个人账本与默认数据。`wx.login` 不会直接返回头像昵称；首次登录后使用 `<button open-type="chooseAvatar">` 与 `<input type="nickname">` 由用户主动选择，再分别调用 `PUT /me` 和 `POST /me/avatar` 保存。`users.wechat_open_id` 为可空唯一字段。手机号授权接口 `/auth/wechat-phone` 保留供未来主体认证后启用，但当前页面不调用；不得接受前端直接上传的明文手机号作为微信身份依据。H5 本地调试继续保留用户名密码登录。
-7. **小程序 storage 有容量限制**：单个 key 上限未明确但总上限约 10MB，不要把大列表（如全量流水）存 storage；用 uni.setStorage 存 token/用户/当前账本即可。
-8. **小程序 request 并发限制**：同时最多 10 个进行中的请求，超出的排队。明细页按月懒加载 + 报表页同时拉多个统计时注意别并发轰炸，`common/request.js` 可加并发控制。
-9. **web-view 业务域名**：如果用 web-view 嵌入 H5 报表页，域名要在 mp 后台「业务域名」配置（与 request 合法域名分开），且域名需备案 + 放校验文件到根目录。
-10. **小程序图片格式**：webp 支持但动图 webp 不推荐，base64 内联图片会增大包体积。**推荐**：图片统一走 OSS/CDN，不要放 `/static`。
-11. **小程序真机与模拟器差异**：开发者工具正常 ≠ 真机正常。录音、蓝牙、文件、权限等**必须真机调试**。iOS 和 Android 行为也有差异（尤其录音格式：iOS 默认 aac，Android 默认 aac/mp3，要显式指定 `format: "mp3"`）。
-12. **弹层禁止依赖 `@click.self`**：uni-app 当前编译到微信小程序后可能只生成外层 `bindtap`，丢失 self 判断；点击输入框、分类 Tab 等子元素会冒泡关闭弹层，表现为“秒退”或“输入没反应”。统一写成外层 `@tap="closeXxx"`、内容容器 `@tap.stop`，并确认生成 WXML 是外层 `bindtap` + 内容 `catchtap`。
-13. **浏览器 API 必须条件编译**：`document/window/fetch/Blob/FileReader/MediaRecorder` 不得进入小程序产物。报表导出在 H5 使用 fetch + Blob，在小程序使用 `uni.downloadFile + uni.openDocument`；录音同理分为 H5 MediaRecorder 和小程序 RecorderManager。执行 `cd frontend && pnpm check:mp-weixin` 会构建并检查所有输入 `bindinput`、弹层 `catchtap`、浏览器 API 残留及个人主体误用手机号组件。
+7. **禁止启动即登录（已实现）**：小程序默认进入 AI 功能浏览页，游客可切换查看记一笔、明细、报表和我的；不得在启动、切 tab 或单纯浏览时调用 `wx.login`、索取手机号或跳转登录页。登录必须由用户主动使用需要账号的数据功能后选择，登录页必须保留“暂不登录，继续浏览”。每次提审前在构建产物中确认 `provider:"weixin"` 只出现在 `pages/login/index.js`。
+8. **小程序 storage 有容量限制**：单个 key 上限未明确但总上限约 10MB，不要把大列表（如全量流水）存 storage；用 uni.setStorage 存 token/用户/当前账本即可。
+9. **小程序 request 并发限制**：同时最多 10 个进行中的请求，超出的排队。明细页按月懒加载 + 报表页同时拉多个统计时注意别并发轰炸，`common/request.js` 可加并发控制。
+10. **web-view 业务域名**：如果用 web-view 嵌入 H5 报表页，域名要在 mp 后台「业务域名」配置（与 request 合法域名分开），且域名需备案 + 放校验文件到根目录。
+11. **小程序图片格式**：webp 支持但动图 webp 不推荐，base64 内联图片会增大包体积。**推荐**：图片统一走 OSS/CDN，不要放 `/static`。
+12. **小程序真机与模拟器差异**：开发者工具正常 ≠ 真机正常。录音、蓝牙、文件、权限等**必须真机调试**。iOS 和 Android 行为也有差异（尤其录音格式：iOS 默认 aac，Android 默认 aac/mp3，要显式指定 `format: "mp3"`）。
+13. **弹层禁止依赖 `@click.self`**：uni-app 当前编译到微信小程序后可能只生成外层 `bindtap`，丢失 self 判断；点击输入框、分类 Tab 等子元素会冒泡关闭弹层，表现为“秒退”或“输入没反应”。统一写成外层 `@tap="closeXxx"`、内容容器 `@tap.stop`，并确认生成 WXML 是外层 `bindtap` + 内容 `catchtap`。
+14. **浏览器 API 必须条件编译**：`document/window/fetch/Blob/FileReader/MediaRecorder` 不得进入小程序产物。报表导出在 H5 使用 fetch + Blob，在小程序使用 `uni.downloadFile + uni.openDocument`；录音同理分为 H5 MediaRecorder 和小程序 RecorderManager。执行 `cd frontend && pnpm check:mp-weixin` 会构建并检查所有输入 `bindinput`、弹层 `catchtap`、浏览器 API 残留及个人主体误用手机号组件。
 
 ---
 
@@ -608,7 +612,8 @@ bash e2e_test.sh
 - [ ] **服务器域名配置**（mp 后台 → 开发 → 开发管理 → 开发设置）：
   - `request 合法域名`：`https://accounter.yourdomain.com`
   - `downloadFile 合法域名`：同上（报表导出用）；当前语音通过 `request` 上传 base64，未来改用 `uploadFile` 时再配置对应域名
-- [ ] **小程序正式构建**：`VITE_API_BASE_URL=https://你的域名 pnpm build:release:mp-weixin`；脚本会拒绝占位域名
+- [ ] **发布版本号**：仓库根目录 `VERSION` 是唯一版本记录；发布前按 `1.0.9 → 1.0.10` 递增，并同步 `frontend/package.json` 的 `version`、`frontend/src/manifest.json` 的 `versionName` 和数字版 `versionCode`。正式构建会校验三处，不一致直接失败
+- [ ] **小程序正式构建**：`VITE_API_BASE_URL=https://你的域名 pnpm build:release:mp-weixin`；脚本会拒绝占位域名及版本记录不一致
 - [ ] **录音授权 `scope.record`**：H5 用 MediaRecorder，小程序用 `uni.getRecorderManager`，需要在 mp 后台「隐私协议」中声明「麦克风」权限用途
 - [ ] **隐私保护指引**：在 mp 后台如实填写收集清单和用途（包括麦克风、必要的本地存储及服务端语音识别），并与代码中的授权提示保持一致
 - [ ] **内容安全策略**：根据当前类目、开放能力和审核反馈，选择微信内容安全 API 或阿里云内容安全；接入点放在后端，首版至少要有长度限制、错误处理和敏感日志脱敏

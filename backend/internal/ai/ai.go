@@ -57,6 +57,7 @@ var errAccountDetailRequired = errors.New("请补充这笔账的具体支付账�
 // Service AI 服务
 type Service struct {
 	mu         sync.RWMutex
+	enabled    bool
 	client     *openai.Client
 	model      string
 	baseURL    string
@@ -71,9 +72,24 @@ type Service struct {
 func NewService() *Service {
 	cfg := config.Get()
 	s := &Service{db: repository.GetDB()}
+	s.ConfigureEnabled(cfg.AI.Enabled)
 	s.Configure(cfg.AI.BaseURL, cfg.AI.APIKey, cfg.AI.Model)
 	s.ConfigureASR(cfg.AI.ASR.BaseURL, cfg.AI.ASR.APIKey, cfg.AI.ASR.Model)
 	return s
+}
+
+// ConfigureEnabled 配置 AI 总开关。关闭后模型调用与 AI 草稿确认均由接口层拒绝。
+func (s *Service) ConfigureEnabled(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.enabled = enabled
+}
+
+// IsEnabled 返回 AI 总开关状态。
+func (s *Service) IsEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.enabled
 }
 
 // Configure 配置对话模型（运行时热更新）
@@ -109,7 +125,7 @@ func (s *Service) ConfigureASR(baseURL, apiKey, model string) {
 func (s *Service) IsConfigured() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.apiKey != "" && s.apiKey != "YOUR_BAILIAN_API_KEY" && s.client != nil
+	return s.enabled && s.apiKey != "" && s.apiKey != "YOUR_BAILIAN_API_KEY" && s.client != nil
 }
 
 // buildSystemPrompt 构造系统提示（塞入账户/分类/今天日期）

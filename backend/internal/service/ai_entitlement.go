@@ -35,6 +35,7 @@ var (
 // AIEntitlementView 是前端可见的 AI 权益状态。
 type AIEntitlementView struct {
 	Status             string     `json:"status"` // not_started | trial | expired | activated
+	FeatureEnabled     bool       `json:"feature_enabled"`
 	AccessAllowed      bool       `json:"access_allowed"`
 	TrialDays          int        `json:"trial_days"`
 	TrialStartedAt     *time.Time `json:"trial_started_at,omitempty"`

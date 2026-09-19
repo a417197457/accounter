@@ -26,7 +26,7 @@ func NewTransactionService() *TransactionService {
 var (
 	errSharedDirectCreate = errors.New("该账本不能直接记账，请在个人账本记账后同步过来")
 	errCopyReadOnly       = errors.New("同步副本只读，请在个人账本修改源流水")
-	errTransferNoPush     = errors.New("转账/借入借出不支持同步到其他账本")
+	errUnsupportedPush    = errors.New("借入借出不支持同步到其他账本")
 	errAlreadyPushed      = errors.New("该流水已同步到目标账本")
 	errNotPersonalSource  = errors.New("只能从个人账本推送流水")
 	errTargetMustShared   = errors.New("只能同步到家庭、旅游或礼账账本")
@@ -579,19 +579,61 @@ func (s *TransactionService) ensurePaymentRoute(ledgerID, fundingAccountID uint,
 	return nil
 }
 
-func (s *TransactionService) mapTransactionAccountsToLedger(src *model.Transaction, targetLedgerID uint) (uint, *uint, error) {
+func (s *TransactionService) mapTransferAccountToLedger(srcAccountID, targetLedgerID, excludeTargetID uint) (uint, error) {
+	var src model.Account
+	if err := s.db.First(&src, srcAccountID).Error; err != nil {
+		return 0, errors.New("源转账账户不存在")
+	}
+
+	query := s.db.Where("ledger_id = ? AND name = ? AND type = ? AND is_archived = ? AND deleted_at IS NULL",
+		targetLedgerID, src.Name, src.Type, false)
+	if excludeTargetID != 0 {
+		query = query.Where("id <> ?", excludeTargetID)
+	}
+	var target model.Account
+	if err := query.Order("sort asc, id asc").First(&target).Error; err == nil {
+		return target.ID, nil
+	}
+
+	query = s.db.Where("ledger_id = ? AND type = ? AND is_archived = ? AND deleted_at IS NULL",
+		targetLedgerID, src.Type, false)
+	if excludeTargetID != 0 {
+		query = query.Where("id <> ?", excludeTargetID)
+	}
+	if err := query.Order("sort asc, id asc").First(&target).Error; err != nil {
+		return 0, fmt.Errorf("目标账本没有可映射「%s」的同类型账户", src.Name)
+	}
+	return target.ID, nil
+}
+
+func (s *TransactionService) mapTransactionAccountsToLedger(src *model.Transaction, targetLedgerID uint) (uint, *uint, *uint, error) {
+	if src.OpType == "transfer" {
+		if src.ToAccountID == nil {
+			return 0, nil, nil, errors.New("源转账缺少转入账户")
+		}
+		accountID, err := s.mapTransferAccountToLedger(src.AccountID, targetLedgerID, 0)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		toAccountID, err := s.mapTransferAccountToLedger(*src.ToAccountID, targetLedgerID, accountID)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		return accountID, nil, &toAccountID, nil
+	}
+
 	accountID, err := s.mapAccountToLedger(src.AccountID, targetLedgerID)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	paymentAccountID, err := s.mapPaymentAccountToLedger(src.PaymentAccountID, targetLedgerID)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	if err := s.ensurePaymentRoute(targetLedgerID, accountID, paymentAccountID); err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
-	return accountID, paymentAccountID, nil
+	return accountID, paymentAccountID, nil, nil
 }
 
 // mapCategoryToLedger 按名称映射分类；找不到则落到同 kind 的「其他」或第一个一级分类
@@ -661,8 +703,8 @@ func (s *TransactionService) PushToLedger(srcLedgerID, srcID, targetLedgerID, us
 	if err := s.db.First(&src, "id = ? AND ledger_id = ?", srcID, srcLedgerID).Error; err != nil {
 		return nil, errors.New("流水不存在")
 	}
-	if src.OpType != "expense" && src.OpType != "income" {
-		return nil, errTransferNoPush
+	if src.OpType != "expense" && src.OpType != "income" && src.OpType != "transfer" {
+		return nil, errUnsupportedPush
 	}
 	if src.SourceID != nil {
 		return nil, errors.New("不能推送同步副本")
@@ -676,7 +718,7 @@ func (s *TransactionService) PushToLedger(srcLedgerID, srcID, targetLedgerID, us
 		return nil, errAlreadyPushed
 	}
 
-	accountID, paymentAccountID, err := s.mapTransactionAccountsToLedger(&src, targetLedgerID)
+	accountID, paymentAccountID, toAccountID, err := s.mapTransactionAccountsToLedger(&src, targetLedgerID)
 	if err != nil {
 		return nil, err
 	}
@@ -689,6 +731,7 @@ func (s *TransactionService) PushToLedger(srcLedgerID, srcID, targetLedgerID, us
 	copyTx := &model.Transaction{
 		AccountID:        accountID,
 		PaymentAccountID: paymentAccountID,
+		ToAccountID:      toAccountID,
 		CategoryID:       categoryID,
 		OpType:           src.OpType,
 		Amount:           src.Amount,
@@ -736,7 +779,7 @@ func (s *TransactionService) PushBatch(srcLedgerID uint, ids []uint, targetLedge
 		switch {
 		case pushErr == nil:
 			result.Pushed++
-		case errors.Is(pushErr, errAlreadyPushed), errors.Is(pushErr, errTransferNoPush):
+		case errors.Is(pushErr, errAlreadyPushed), errors.Is(pushErr, errUnsupportedPush):
 			result.Skipped++
 		default:
 			result.Failed++
@@ -745,7 +788,7 @@ func (s *TransactionService) PushBatch(srcLedgerID uint, ids []uint, targetLedge
 	return result, nil
 }
 
-// PushMonth 整月同步个人账本 income/expense 到其他类型账本
+// PushMonth 整月同步个人账本收入、支出和转账到其他类型账本
 func (s *TransactionService) PushMonth(srcLedgerID uint, month string, targetLedgerID, userID uint) (*PushMonthResult, error) {
 	t, err := time.ParseInLocation("2006-01", month, time.Local)
 	if err != nil {
@@ -757,7 +800,7 @@ func (s *TransactionService) PushMonth(srcLedgerID uint, month string, targetLed
 	var list []model.Transaction
 	err = s.db.Where(
 		"ledger_id = ? AND occurred_at >= ? AND occurred_at <= ? AND op_type IN ? AND source_id IS NULL AND deleted_at IS NULL",
-		srcLedgerID, start, end, []string{"expense", "income"},
+		srcLedgerID, start, end, []string{"expense", "income", "transfer"},
 	).Find(&list).Error
 	if err != nil {
 		return nil, fmt.Errorf("查询当月流水失败: %w", err)
@@ -788,7 +831,7 @@ func (s *TransactionService) syncCopies(src *model.Transaction) error {
 
 	for i := range copies {
 		copy := copies[i]
-		accountID, paymentAccountID, err := s.mapTransactionAccountsToLedger(src, copy.LedgerID)
+		accountID, paymentAccountID, toAccountID, err := s.mapTransactionAccountsToLedger(src, copy.LedgerID)
 		if err != nil {
 			continue
 		}
@@ -807,7 +850,7 @@ func (s *TransactionService) syncCopies(src *model.Transaction) error {
 			copy.Amount = src.Amount
 			copy.Remark = src.Remark
 			copy.OccurredAt = src.OccurredAt
-			copy.ToAccountID = nil
+			copy.ToAccountID = toAccountID
 			copy.PaymentAccountID = paymentAccountID
 			if err := tx.Save(&copy).Error; err != nil {
 				return err
@@ -842,7 +885,7 @@ func (s *TransactionService) RepairSyncedPaymentRoutes() (int, error) {
 			continue
 		}
 
-		accountID, paymentAccountID, err := s.mapTransactionAccountsToLedger(&source, copyTx.LedgerID)
+		accountID, paymentAccountID, toAccountID, err := s.mapTransactionAccountsToLedger(&source, copyTx.LedgerID)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("映射同步副本 %d 的支付方式失败: %w", copyTx.ID, err)
@@ -851,7 +894,9 @@ func (s *TransactionService) RepairSyncedPaymentRoutes() (int, error) {
 		}
 		paymentUnchanged := (copyTx.PaymentAccountID == nil && paymentAccountID == nil) ||
 			(copyTx.PaymentAccountID != nil && paymentAccountID != nil && *copyTx.PaymentAccountID == *paymentAccountID)
-		if copyTx.AccountID == accountID && paymentUnchanged {
+		toAccountUnchanged := (copyTx.ToAccountID == nil && toAccountID == nil) ||
+			(copyTx.ToAccountID != nil && toAccountID != nil && *copyTx.ToAccountID == *toAccountID)
+		if copyTx.AccountID == accountID && paymentUnchanged && toAccountUnchanged {
 			continue
 		}
 
@@ -861,9 +906,11 @@ func (s *TransactionService) RepairSyncedPaymentRoutes() (int, error) {
 			}
 			copyTx.AccountID = accountID
 			copyTx.PaymentAccountID = paymentAccountID
+			copyTx.ToAccountID = toAccountID
 			if err := tx.Model(&copyTx).Updates(map[string]interface{}{
 				"account_id":         accountID,
 				"payment_account_id": paymentAccountID,
+				"to_account_id":      toAccountID,
 			}).Error; err != nil {
 				return fmt.Errorf("更新同步副本支付方式失败: %w", err)
 			}

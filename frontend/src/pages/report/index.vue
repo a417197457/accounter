@@ -8,6 +8,13 @@
       </view>
       <text class="page-action" @click="exportExcel">导出 Excel</text>
     </view>
+    <view class="guest-report-tip" v-if="!loggedIn" @click="requestLogin()">
+      <view>
+        <text class="guest-report-title">正在浏览报表功能</text>
+        <text class="guest-report-copy">登录后可查看你的真实收支、日历热力图和预算执行情况</text>
+      </view>
+      <text class="guest-report-action">去登录 ›</text>
+    </view>
     <!-- 账本切换 -->
     <view class="ledger-tabs">
       <view
@@ -248,7 +255,7 @@
 
 <script>
 import { get, put, del } from '../../common/request.js'
-import { checkLogin } from '../../common/auth.js'
+import { isLoggedIn, requireLogin } from '../../common/auth.js'
 import { BASE_URL, TOKEN_KEY } from '../../common/config.js'
 import { paymentRouteLabel } from '../../common/account.js'
 
@@ -256,6 +263,7 @@ export default {
   data() {
     return {
       ledgers: [],
+      loggedIn: false,
       currentLedger: null,
       currentMonth: '',
       reportMonths: [],
@@ -394,7 +402,6 @@ export default {
     }
   },
   onLoad() {
-    checkLogin()
     const now = new Date()
     this.currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
     this._onTrendResize = () => this.measureTrendChart()
@@ -413,10 +420,30 @@ export default {
     if (typeof uni.offWindowResize === 'function') uni.offWindowResize(this._onTrendResize)
   },
   onShow() {
-    this.loadLedgers()
+    this.loggedIn = isLoggedIn()
+    if (this.loggedIn) this.loadLedgers()
+    else this.setGuestPreview()
     this.measureTrendChart()
   },
   methods: {
+    requestLogin() {
+      requireLogin('登录后即可查看只属于你的财务报表')
+    },
+    setGuestPreview() {
+      const now = new Date()
+      this.currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+      this.reportMonths = [this.currentMonth]
+      this.ledgers = []
+      this.currentLedger = null
+      this.overview = { income: 0, expense: 0, transfer: 0, balance: 0, total_assets: 0 }
+      this.categories = []
+      this.trend = []
+      this.budgets = []
+      this.expenseParents = []
+      this.selectedTransactions = []
+      this.selectedDate = this.todayDate
+      this.dataLoading = false
+    },
     measureTrendChart() {
       this.$nextTick(() => {
         uni.createSelectorQuery()
@@ -457,9 +484,7 @@ export default {
           this.loadData()
         }
       } catch (err) {
-        if (err.message && err.message.includes('未登录')) {
-          uni.redirectTo({ url: '/pages/login/index' })
-        }
+        if (err?.code !== 'UNAUTHORIZED') console.error('加载报表账本失败:', err)
       }
     },
     async switchLedger(ledger) {
@@ -531,9 +556,7 @@ export default {
         this.measureTrendChart()
       } catch (err) {
         if (requestId !== this.dataRequestId) return
-        if (err.message && err.message.includes('未登录')) {
-          uni.redirectTo({ url: '/pages/login/index' })
-        } else {
+        if (err?.code !== 'UNAUTHORIZED') {
           uni.showToast({ title: err.message || '加载报表失败', icon: 'none' })
         }
       } finally {
@@ -647,6 +670,7 @@ export default {
       return Math.min(100, (parseFloat(b.spent) / amount) * 100)
     },
     openBudgetModal() {
+      if (!this.loggedIn) return requireLogin('登录后即可设置和跟踪预算')
       this.budgetForm = { mode: 'total', category_id: null, amount: '' }
       this.showBudget = true
       this.$nextTick(() => {
@@ -716,6 +740,10 @@ export default {
       })
     },
     async exportExcel() {
+      if (!this.loggedIn) {
+        requireLogin('登录后即可导出你的个人账单报表')
+        return
+      }
       if (!this.currentLedger) return
       const token = uni.getStorageSync(TOKEN_KEY)
       const url = `${BASE_URL}/api/report/export?month=${this.currentMonth}`
@@ -824,6 +852,21 @@ export default {
   padding: 0 4px 18px;
 }
 .page-head-main { flex: 1; min-width: 0; }
+.guest-report-tip {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #49655c;
+  background: #edf8f4;
+  border: 1px solid #dcefe7;
+  border-radius: 16px;
+}
+.guest-report-title { display: block; color: #24473d; font-size: 14px; font-weight: 650; }
+.guest-report-copy { display: block; margin-top: 4px; font-size: 11px; line-height: 18px; }
+.guest-report-action { flex: 0 0 auto; color: #2eaa83; font-size: 12px; font-weight: 650; }
 .page-title { display: block; color: #18312b; font-size: 27px; font-weight: 700; }
 .page-copy { display: block; margin-top: 6px; color: #87968f; font-size: 13px; }
 .page-action {

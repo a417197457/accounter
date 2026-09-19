@@ -36,13 +36,13 @@ func audioMime(format string) string {
 
 // asrRequest 百炼 ASR 的请求体（OpenAI 兼容 chat/completions + input_audio data URI）
 type asrRequest struct {
-	Model    string          `json:"model"`
-	Messages []asrMessage    `json:"messages"`
+	Model    string       `json:"model"`
+	Messages []asrMessage `json:"messages"`
 }
 
 type asrMessage struct {
-	Role    string        `json:"role"`
-	Content []asrContent  `json:"content"`
+	Role    string       `json:"role"`
+	Content []asrContent `json:"content"`
 }
 
 type asrContent struct {
@@ -65,7 +65,7 @@ type asrResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// Transcribe 语音识别：百炼 qwen3-asr-flash，走 chat/completions + input_audio
+// Transcribe 语音识别：百炼 qwen-audio-3.0-asr-flash，走 chat/completions + input_audio
 // audioB64 是音频的 base64 编码（不含 data: 前缀），format 是 mp3/wav/webm/m4a/aac/ogg
 func (s *Service) Transcribe(ctx context.Context, audioB64 string, format string) (string, error) {
 	s.mu.RLock()
@@ -91,7 +91,7 @@ func (s *Service) Transcribe(ctx context.Context, audioB64 string, format string
 				Role: "user",
 				Content: []asrContent{
 					{
-						Type: "input_audio",
+						Type:       "input_audio",
 						InputAudio: asrAudioRef{Data: dataURI},
 					},
 				},
